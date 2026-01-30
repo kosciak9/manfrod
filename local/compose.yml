@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: docker.io/paradedb/paradedb@sha256:17fbec03c8543eb12267edb06345779f239505654609c4376ade53b4ec4ad1e9
+    container_name: manfred-db
+    environment:
+      POSTGRES_USER: manfred
+      POSTGRES_PASSWORD: qLmVMeXiYyy65ADb
+    ports:
+      - "35232:5432"
+    volumes:
+      - manfred_data:/var/lib/postgresql
+
+volumes:
+  manfred_data:
