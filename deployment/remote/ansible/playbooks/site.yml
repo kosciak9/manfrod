@@ -1,0 +1,356 @@
+---
+# Main site playbook for Manfrod deployment
+#
+# This playbook:
+# 1. Installs and configures Podman
+# 2. Sets up ParadeDB container with persistent storage
+# 3. Creates systemd service for ParadeDB
+# 4. Installs and configures Tailscale
+# 5. Configures firewall (optional)
+#
+# Prerequisites:
+# - Bootstrap playbook has been run
+# - inventory/hosts.yml updated to use kosciak user
+#
+# Run with:
+#   ansible-playbook playbooks/site.yml --vault-password-file .vault_pass
+
+- name: Configure Manfrod server
+  hosts: configured
+  gather_facts: true
+
+  tasks:
+    # =========================================================================
+    # System Configuration
+    # =========================================================================
+
+    - name: Set hostname
+      ansible.builtin.copy:
+        content: "{{ hostname }}\n"
+        dest: /etc/hostname
+        mode: "0644"
+      become: true
+      notify: Apply hostname
+
+    - name: Update /etc/hosts with hostname
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1\t{{ hostname }}"
+        insertafter: '^127\.0\.0\.1'
+      become: true
+
+    - name: Set timezone
+      community.general.timezone:
+        name: "{{ timezone }}"
+      become: true
+
+    - name: Install base packages
+      community.general.pacman:
+        name: "{{ base_packages }}"
+        state: present
+        update_cache: true
+      become: true
+
+    # =========================================================================
+    # WiFi Configuration (wpa_supplicant)
+    # =========================================================================
+
+    - name: Install wireless tools
+      community.general.pacman:
+        name:
+          - wpa_supplicant
+          - wireless-regdb
+        state: present
+      become: true
+
+    - name: Create wpa_supplicant configuration directory
+      ansible.builtin.file:
+        path: /etc/wpa_supplicant
+        state: directory
+        mode: '0755'
+      become: true
+
+    - name: Configure wpa_supplicant for wlan0
+      ansible.builtin.copy:
+        content: |
+          ctrl_interface=/run/wpa_supplicant
+          ctrl_interface_group=wheel
+          sae_pwe=2
+          
+          network={
+              ssid="{{ vault_wifi_ssid }}"
+              psk="{{ vault_wifi_password }}"
+              key_mgmt=SAE
+              ieee80211w=2
+          }
+        dest: /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
+        mode: '0600'
+      become: true
+      notify: Restart wpa_supplicant
+
+    - name: Enable and start wpa_supplicant for wlan0
+      ansible.builtin.systemd:
+        name: wpa_supplicant@wlan0
+        state: started
+        enabled: true
+      become: true
+
+    - name: Create networkd config for wlan0
+      ansible.builtin.copy:
+        content: |
+          [Match]
+          Name=wlan0
+
+          [Network]
+          DHCP=yes
+        dest: /etc/systemd/network/25-wlan0.network
+        mode: "0644"
+      become: true
+      notify: Restart networkd
+
+    - name: Create networkd config for ethernet
+      ansible.builtin.copy:
+        content: |
+          [Match]
+          Name=en*
+
+          [Network]
+          DHCP=yes
+        dest: /etc/systemd/network/20-wired.network
+        mode: "0644"
+      become: true
+      notify: Restart networkd
+
+    - name: Link resolv.conf to systemd-resolved
+      ansible.builtin.file:
+        src: /run/systemd/resolve/stub-resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: true
+      become: true
+
+    - name: Enable systemd-networkd
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: started
+        enabled: true
+      become: true
+
+    - name: Enable systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: started
+        enabled: true
+      become: true
+
+    # =========================================================================
+    # Podman Installation
+    # =========================================================================
+
+    - name: Install Podman and container tools
+      community.general.pacman:
+        name: "{{ podman_packages }}"
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Enable lingering for manfrod user (required for user services without login)
+      ansible.builtin.command: loginctl enable-linger {{ app_user }}
+      become: true
+      register: linger_result
+      changed_when: linger_result.rc == 0
+
+    # =========================================================================
+    # TUN Module (required for Tailscale)
+    # =========================================================================
+
+    - name: Ensure TUN module is loaded
+      community.general.modprobe:
+        name: tun
+        state: present
+      become: true
+
+    - name: Persist TUN module loading at boot
+      ansible.builtin.copy:
+        content: "tun\n"
+        dest: /etc/modules-load.d/tun.conf
+        mode: "0644"
+      become: true
+
+    # =========================================================================
+    # ParadeDB Container Setup (SKIPPED - manual setup required)
+    # =========================================================================
+    # TODO: Set up ParadeDB as rootless container under manfrod user
+    # Run manually as manfrod:
+    #   podman volume create manfrod_postgres_data
+    #   podman run -d --name manfrod-db \
+    #     -e POSTGRES_USER=manfrod \
+    #     -e POSTGRES_PASSWORD=<password> \
+    #     -e POSTGRES_DB=manfrod_prod \
+    #     -p 127.0.0.1:5432:5432 \
+    #     -v manfrod_postgres_data:/var/lib/postgresql/data \
+    #     docker.io/paradedb/paradedb:v0.21.5-pg18
+
+    # =========================================================================
+    # Tailscale Installation and Configuration
+    # =========================================================================
+
+    - name: Install Tailscale
+      community.general.pacman:
+        name: tailscale
+        state: present
+      become: true
+
+    - name: Enable and start tailscaled service
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: true
+      become: true
+
+    - name: Authenticate Tailscale with auth key
+      ansible.builtin.command: >
+        tailscale up
+        --authkey={{ vault_tailscale_authkey }}
+        {{ tailscale_args }}
+        {% if tailscale_accept_dns %}--accept-dns{% endif %}
+      register: tailscale_up
+      changed_when: "'Success' in tailscale_up.stdout or tailscale_up.rc == 0"
+      failed_when: tailscale_up.rc != 0 and 'already' not in tailscale_up.stderr
+      become: true
+
+    - name: Get Tailscale status
+      ansible.builtin.command: tailscale status
+      register: tailscale_status
+      changed_when: false
+      become: true
+
+    - name: Display Tailscale status
+      ansible.builtin.debug:
+        var: tailscale_status.stdout_lines
+
+    - name: Get Tailscale IP
+      ansible.builtin.command: tailscale ip -4
+      register: tailscale_ip
+      changed_when: false
+      become: true
+
+    # =========================================================================
+    # Firewall Configuration (optional - nftables)
+    # =========================================================================
+
+    - name: Install nftables
+      community.general.pacman:
+        name: nftables
+        state: present
+      become: true
+
+    - name: Create nftables configuration
+      ansible.builtin.copy:
+        content: |
+          #!/usr/sbin/nft -f
+
+          flush ruleset
+
+          table inet filter {
+            chain input {
+              type filter hook input priority 0; policy drop;
+              
+              # Allow established/related connections
+              ct state established,related accept
+              
+              # Allow loopback
+              iif lo accept
+              
+              # Allow ICMP (ping)
+              ip protocol icmp accept
+              ip6 nexthdr icmpv6 accept
+              
+              # Allow SSH (for bootstrap, can be removed after Tailscale SSH works)
+              tcp dport 22 accept
+              
+              # Allow Tailscale interface
+              iifname "tailscale0" accept
+              
+              # Log and drop everything else
+              # log prefix "nftables drop: " drop
+              drop
+            }
+            
+            chain forward {
+              type filter hook forward priority 0; policy drop;
+            }
+            
+            chain output {
+              type filter hook output priority 0; policy accept;
+            }
+          }
+        dest: /etc/nftables.conf
+        mode: "0644"
+      become: true
+      notify: Restart nftables
+
+    - name: Enable nftables service
+      ansible.builtin.systemd:
+        name: nftables
+        state: started
+        enabled: true
+      become: true
+
+  handlers:
+    - name: Apply hostname
+      ansible.builtin.command: hostnamectl set-hostname {{ hostname }}
+      become: true
+
+    - name: Restart wpa_supplicant
+      ansible.builtin.systemd:
+        name: wpa_supplicant@wlan0
+        state: restarted
+      become: true
+
+    - name: Restart networkd
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+      become: true
+
+    - name: Restart nftables
+      ansible.builtin.systemd:
+        name: nftables
+        state: restarted
+      become: true
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Deployment complete!
+          ========================================
+
+          Tailscale:
+            - IP: {{ tailscale_ip.stdout }}
+            - SSH: ssh {{ admin_user }}@{{ tailscale_ip.stdout }}
+            - Or use MagicDNS: ssh {{ admin_user }}@{{ hostname }}
+
+          ParadeDB (manual setup required):
+            sudo -u {{ app_user }} -i
+            podman volume create {{ paradedb_volume_name }}
+            podman run -d --name {{ paradedb_container_name }} \
+              -e POSTGRES_USER={{ postgres_user }} \
+              -e POSTGRES_PASSWORD=<password> \
+              -e POSTGRES_DB={{ postgres_db }} \
+              -p 127.0.0.1:{{ postgres_port }}:5432 \
+              -v {{ paradedb_volume_name }}:/var/lib/postgresql/data \
+              {{ paradedb_image }}
+
+          Services:
+            - Tailscale: systemctl status tailscaled
+
+          Next steps:
+            1. Set up ParadeDB container as manfrod user (see above)
+            2. Disable SSH port 22 in nftables.conf after confirming Tailscale SSH works
+            3. Deploy Manfrod application
+
+          ========================================

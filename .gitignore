@@ -31,3 +31,8 @@ manfred-*.tar
 # LSP
 /.elixir_ls
 /.expert
+
+# Ansible
+deployment/remote/ansible/.vault_pass
+deployment/remote/ansible/.ansible_cache/
+deployment/remote/ansible/*.retry
