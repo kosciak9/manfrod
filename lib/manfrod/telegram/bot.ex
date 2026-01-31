@@ -52,6 +52,7 @@ defmodule Manfrod.Telegram.Bot do
       Manfrod.Agent.send_message(%{
         content: text,
         chat_id: msg.chat.id,
+        user_id: msg.from.id,
         source: :telegram
       })
 

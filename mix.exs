@@ -33,7 +33,9 @@ defmodule Manfrod.MixProject do
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"},
       {:tidewave, "~> 0.5.4", only: [:dev]},
-      {:ex_gram, "~> 0.57"}
+      {:ex_gram, "~> 0.57"},
+      {:pgvector, "~> 0.3"},
+      {:paradex, "~> 0.4"}
     ]
   end
 

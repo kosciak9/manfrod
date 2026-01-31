@@ -4,6 +4,8 @@ config :manfrod,
   ecto_repos: [Manfrod.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true]
 
+config :manfrod, Manfrod.Repo, types: Manfrod.PostgrexTypes
+
 config :manfrod, ManfrodWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,

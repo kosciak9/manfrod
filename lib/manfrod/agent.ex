@@ -7,6 +7,8 @@ defmodule Manfrod.Agent do
 
   require Logger
 
+  alias Manfrod.Memory
+  alias Manfrod.Memory.Extractor
   alias Manfrod.Telegram.Sender
 
   @base_url "https://opencode.ai/zen/v1"
@@ -46,13 +48,17 @@ defmodule Manfrod.Agent do
 
   @impl true
   def handle_cast({:message, message}, state) do
-    %{content: content, chat_id: chat_id} = message
+    %{content: content, chat_id: chat_id, user_id: user_id} = message
 
     Logger.info(
       "Agent received message from #{message[:source]}: #{String.slice(content, 0, 50)}..."
     )
 
-    {response_text, new_state} = process_message(content, state)
+    # Process with memory context
+    {response_text, new_state} = process_message(content, user_id, state)
+
+    # Async extraction (parallel embedding + storage)
+    Extractor.extract_async(content, response_text, user_id)
 
     case Sender.send(chat_id, response_text) do
       {:ok, _} ->
@@ -67,20 +73,43 @@ defmodule Manfrod.Agent do
 
   # Private
 
-  defp process_message(text, state) do
-    user_message = ReqLLM.Context.user(text)
+  defp process_message(text, user_id, state) do
+    # Retrieve relevant memory context
+    memory_context = get_memory_context(text, user_id)
+
+    # Build user message with memory context prepended
+    user_content =
+      if memory_context == "" do
+        text
+      else
+        "[Memory context]\n#{memory_context}\n\n[User message]\n#{text}"
+      end
+
+    user_message = ReqLLM.Context.user(user_content)
     messages = state.messages ++ [user_message]
 
     case call_llm(messages) do
       {:ok, response_text} ->
         assistant_message = ReqLLM.Context.assistant(response_text)
-        new_messages = messages ++ [assistant_message]
+        # Store original user message (without memory) for clean history
+        clean_user_message = ReqLLM.Context.user(text)
+        new_messages = state.messages ++ [clean_user_message, assistant_message]
         {response_text, %{state | messages: new_messages}}
 
       {:error, reason} ->
         error_text = "Sorry, I encountered an error. Please try again."
         Logger.error("LLM call failed: #{inspect(reason)}")
         {error_text, state}
+    end
+  end
+
+  defp get_memory_context(query, user_id) do
+    case Memory.search(query, user_id, limit: 5) do
+      {:ok, nodes} when nodes != [] ->
+        Memory.build_context(nodes)
+
+      _ ->
+        ""
     end
   end
 
@@ -109,41 +138,5 @@ defmodule Manfrod.Agent do
       {:error, _} = error ->
         error
     end
-  end
-
-  # Tools (for future use)
-
-  @doc "Execute a bash command"
-  def tool_bash(command) do
-    case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
-      {output, 0} -> {:ok, output}
-      {output, code} -> {:error, code, output}
-    end
-  end
-
-  @doc "Read a file"
-  def tool_read_file(path) do
-    File.read(path)
-  end
-
-  @doc "Write a file"
-  def tool_write_file(path, content) do
-    File.write(path, content)
-  end
-
-  @doc "Compile and reload a module from file"
-  def tool_reload_file(path) do
-    try do
-      Code.compile_file(path)
-      :ok
-    rescue
-      e -> {:error, e}
-    end
-  end
-
-  @doc "Reload a module by name"
-  def tool_reload_module(module) when is_atom(module) do
-    :code.purge(module)
-    :code.load_file(module)
   end
 end

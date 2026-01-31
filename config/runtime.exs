@@ -31,6 +31,9 @@ config :manfrod, ManfrodWeb.Endpoint,
 # Zen API (Kimi K2.5)
 config :manfrod, :zen_api_key, env!("ZEN_API_KEY", :string?)
 
+# Voyage AI (embeddings)
+config :manfrod, :voyage_api_key, env!("VOYAGE_API_KEY", :string?)
+
 # Telegram Bot
 config :manfrod, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
 
