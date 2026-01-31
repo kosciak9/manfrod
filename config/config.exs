@@ -1,13 +1,13 @@
 import Config
 
-config :manfred,
-  ecto_repos: [Manfred.Repo],
+config :manfrod,
+  ecto_repos: [Manfrod.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true]
 
-config :manfred, ManfredWeb.Endpoint,
+config :manfrod, ManfrodWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
-  pubsub_server: Manfred.PubSub,
+  pubsub_server: Manfrod.PubSub,
   live_view: [signing_salt: "5e3ieG0i"],
   code_reloader: true
 

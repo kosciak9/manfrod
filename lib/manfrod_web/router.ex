@@ -1,15 +1,15 @@
-defmodule ManfredWeb.Router do
-  use ManfredWeb, :router
+defmodule ManfrodWeb.Router do
+  use ManfrodWeb, :router
 
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
-    plug :put_root_layout, html: {ManfredWeb.Layouts, :root}
+    plug :put_root_layout, html: {ManfrodWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
   end
 
-  scope "/", ManfredWeb do
+  scope "/", ManfrodWeb do
     pipe_through :browser
 
     live "/", ChatLive

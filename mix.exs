@@ -1,9 +1,9 @@
-defmodule Manfred.MixProject do
+defmodule Manfrod.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :manfred,
+      app: :manfrod,
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: true,
@@ -15,7 +15,7 @@ defmodule Manfred.MixProject do
 
   def application do
     [
-      mod: {Manfred.Application, []},
+      mod: {Manfrod.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end

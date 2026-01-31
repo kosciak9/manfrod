@@ -1,4 +1,4 @@
-# Manfred
+# Manfrod
 
 To start your Phoenix server:
 

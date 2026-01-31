@@ -1,12 +1,12 @@
-defmodule Manfred.Telegram.Bot do
+defmodule Manfrod.Telegram.Bot do
   @moduledoc """
-  Telegram bot interface for Manfred.
-  Forwards messages to the shared Agent and replies with responses.
+  Telegram bot interface for Manfrod.
+  Forwards messages to the Agent inbox asynchronously.
 
   Only the user specified by TELEGRAM_ALLOWED_USER_ID can interact with the bot.
   """
 
-  @bot :manfred_telegram_bot
+  @bot :manfrod_telegram_bot
 
   use ExGram.Bot, name: @bot
 
@@ -19,7 +19,7 @@ defmodule Manfred.Telegram.Bot do
     if allowed?(msg) do
       answer(
         context,
-        "Hello! I'm Manfred, your AI assistant. Send me a message and I'll respond."
+        "Hello! I'm Manfrod, your AI assistant. Send me a message and I'll respond."
       )
     else
       log_blocked(msg, "/start")
@@ -30,7 +30,7 @@ defmodule Manfred.Telegram.Bot do
   def handle({:command, "help", msg}, context) do
     if allowed?(msg) do
       answer(context, """
-      I'm Manfred, an AI assistant.
+      I'm Manfrod, an AI assistant.
 
       Just send me any message and I'll respond.
 
@@ -44,18 +44,19 @@ defmodule Manfred.Telegram.Bot do
   end
 
   # Handle regular text messages
-  def handle({:text, text, msg}, context) do
+  def handle({:text, text, msg}, _context) do
     if allowed?(msg) do
       Logger.info("Telegram message received: #{String.slice(text, 0, 50)}...")
 
-      case Manfred.Agent.message(text) do
-        {:response, response} ->
-          answer(context, response)
+      # Send to Agent inbox asynchronously
+      Manfrod.Agent.send_message(%{
+        content: text,
+        chat_id: msg.chat.id,
+        source: :telegram
+      })
 
-        {:error, reason} ->
-          Logger.error("Agent error: #{inspect(reason)}")
-          answer(context, "Sorry, I encountered an error. Please try again.")
-      end
+      # No immediate response - Agent will respond via Sender
+      :ok
     else
       log_blocked(msg, "text message")
     end
@@ -67,7 +68,7 @@ defmodule Manfred.Telegram.Bot do
   end
 
   defp allowed?(msg) do
-    msg.from.id == Application.get_env(:manfred, :telegram_allowed_user_id)
+    msg.from.id == Application.get_env(:manfrod, :telegram_allowed_user_id)
   end
 
   defp log_blocked(msg, action) do

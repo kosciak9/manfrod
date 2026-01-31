@@ -6,9 +6,9 @@ source!([".env", System.get_env()])
 
 # Database - default to local podman compose instance
 database_url =
-  env!("DATABASE_URL", :string, "ecto://manfred:qLmVMeXiYyy65ADb@localhost:35232/manfred")
+  env!("DATABASE_URL", :string, "ecto://manfrod:qLmVMeXiYyy65ADb@localhost:35232/manfrod")
 
-config :manfred, Manfred.Repo,
+config :manfrod, Manfrod.Repo,
   url: database_url,
   pool_size: env!("POOL_SIZE", :integer, 10)
 
@@ -20,7 +20,7 @@ secret_key_base =
     "u4j9UKEyW8U1/ddckTtl9Va+v4X4eXQp4xu+0xnGerLY8elQoJVK5f+gKIfVvslH"
   )
 
-config :manfred, ManfredWeb.Endpoint,
+config :manfrod, ManfrodWeb.Endpoint,
   http: [
     ip: {0, 0, 0, 0},
     port: env!("PORT", :integer, 35233)
@@ -29,9 +29,9 @@ config :manfred, ManfredWeb.Endpoint,
   server: true
 
 # Zen API (Kimi K2.5)
-config :manfred, :zen_api_key, env!("ZEN_API_KEY", :string?)
+config :manfrod, :zen_api_key, env!("ZEN_API_KEY", :string?)
 
 # Telegram Bot
-config :manfred, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
+config :manfrod, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
 
-config :manfred, :telegram_allowed_user_id, env!("TELEGRAM_ALLOWED_USER_ID", :integer)
+config :manfrod, :telegram_allowed_user_id, env!("TELEGRAM_ALLOWED_USER_ID", :integer)

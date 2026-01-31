@@ -1,4 +1,4 @@
-defmodule ManfredWeb.Layouts do
+defmodule ManfrodWeb.Layouts do
   @moduledoc """
   Layout components for the application.
   """
@@ -15,7 +15,7 @@ defmodule ManfredWeb.Layouts do
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="csrf-token" content={Phoenix.Controller.get_csrf_token()} />
-        <title>Manfred</title>
+        <title>Manfrod</title>
         <style>
           * { box-sizing: border-box; margin: 0; padding: 0; }
           body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #e0e0e0; }

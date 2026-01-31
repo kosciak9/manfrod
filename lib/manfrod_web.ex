@@ -1,4 +1,4 @@
-defmodule ManfredWeb do
+defmodule ManfrodWeb do
   @moduledoc """
   The entrypoint for defining your web interface.
   """
@@ -19,7 +19,7 @@ defmodule ManfredWeb do
     quote do
       use Phoenix.LiveView
 
-      alias ManfredWeb.Layouts
+      alias ManfrodWeb.Layouts
 
       unquote(verified_routes())
     end
@@ -28,9 +28,9 @@ defmodule ManfredWeb do
   def verified_routes do
     quote do
       use Phoenix.VerifiedRoutes,
-        endpoint: ManfredWeb.Endpoint,
-        router: ManfredWeb.Router,
-        statics: ManfredWeb.static_paths()
+        endpoint: ManfrodWeb.Endpoint,
+        router: ManfrodWeb.Router,
+        statics: ManfrodWeb.static_paths()
     end
   end
 

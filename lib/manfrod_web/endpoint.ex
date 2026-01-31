@@ -1,5 +1,5 @@
-defmodule ManfredWeb.Endpoint do
-  use Phoenix.Endpoint, otp_app: :manfred
+defmodule ManfrodWeb.Endpoint do
+  use Phoenix.Endpoint, otp_app: :manfrod
 
   @session_options [
     store: :cookie,
@@ -14,9 +14,9 @@ defmodule ManfredWeb.Endpoint do
 
   plug Plug.Static,
     at: "/",
-    from: :manfred,
+    from: :manfrod,
     gzip: false,
-    only: ManfredWeb.static_paths()
+    only: ManfrodWeb.static_paths()
 
   # Serve Phoenix and LiveView JS from deps
   plug Plug.Static,
@@ -31,7 +31,7 @@ defmodule ManfredWeb.Endpoint do
 
   if code_reloading? do
     plug Phoenix.CodeReloader
-    plug Phoenix.Ecto.CheckRepoStatus, otp_app: :manfred
+    plug Phoenix.Ecto.CheckRepoStatus, otp_app: :manfrod
   end
 
   if Code.ensure_loaded?(Tidewave) do
@@ -49,5 +49,5 @@ defmodule ManfredWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
-  plug ManfredWeb.Router
+  plug ManfrodWeb.Router
 end

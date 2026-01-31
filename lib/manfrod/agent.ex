@@ -1,17 +1,19 @@
-defmodule Manfred.Agent do
+defmodule Manfrod.Agent do
   @moduledoc """
-  The Agent - a GenServer with tools and a loop.
-  Receives messages, thinks, acts, responds.
+  The Agent - a GenServer with an inbox.
+  Receives messages asynchronously, thinks, acts, responds via Telegram.
   """
   use GenServer
 
   require Logger
 
+  alias Manfrod.Telegram.Sender
+
   @base_url "https://opencode.ai/zen/v1"
   @model_id "kimi-k2.5-free"
 
   @system_prompt """
-  You are Manfred, a helpful AI assistant. You are friendly, concise, and helpful.
+  You are Manfrod, a helpful AI assistant. You are friendly, concise, and helpful.
   Answer questions directly and clearly.
   """
 
@@ -21,9 +23,17 @@ defmodule Manfred.Agent do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Send a message to the agent and get a response"
-  def message(text) do
-    GenServer.call(__MODULE__, {:message, text}, :infinity)
+  @doc """
+  Send a message to the agent asynchronously.
+  The agent will process and respond via Telegram.
+
+  Message must include:
+  - :content - the text content
+  - :chat_id - Telegram chat ID for response
+  - :source - origin of message (e.g., :telegram)
+  """
+  def send_message(message) when is_map(message) do
+    GenServer.cast(__MODULE__, {:message, message})
   end
 
   # Server Callbacks
@@ -35,9 +45,24 @@ defmodule Manfred.Agent do
   end
 
   @impl true
-  def handle_call({:message, text}, _from, state) do
-    {response, new_state} = process_message(text, state)
-    {:reply, {:response, response}, new_state}
+  def handle_cast({:message, message}, state) do
+    %{content: content, chat_id: chat_id} = message
+
+    Logger.info(
+      "Agent received message from #{message[:source]}: #{String.slice(content, 0, 50)}..."
+    )
+
+    {response_text, new_state} = process_message(content, state)
+
+    case Sender.send(chat_id, response_text) do
+      {:ok, _} ->
+        Logger.info("Agent sent response to chat #{chat_id}")
+
+      {:error, reason} ->
+        Logger.error("Failed to send response to Telegram: #{inspect(reason)}")
+    end
+
+    {:noreply, new_state}
   end
 
   # Private
@@ -53,7 +78,7 @@ defmodule Manfred.Agent do
         {response_text, %{state | messages: new_messages}}
 
       {:error, reason} ->
-        error_text = "Error: #{inspect(reason)}"
+        error_text = "Sorry, I encountered an error. Please try again."
         Logger.error("LLM call failed: #{inspect(reason)}")
         {error_text, state}
     end
@@ -68,7 +93,7 @@ defmodule Manfred.Agent do
   end
 
   defp call_llm_with_retry(messages, retries, delay) do
-    api_key = Application.get_env(:manfred, :zen_api_key)
+    api_key = Application.get_env(:manfrod, :zen_api_key)
     context = ReqLLM.Context.new(messages)
     model = %{id: @model_id, provider: :openai}
 
@@ -86,7 +111,7 @@ defmodule Manfred.Agent do
     end
   end
 
-  # Tools
+  # Tools (for future use)
 
   @doc "Execute a bash command"
   def tool_bash(command) do
