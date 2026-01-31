@@ -30,3 +30,8 @@ config :manfred, ManfredWeb.Endpoint,
 
 # Zen API (Kimi K2.5)
 config :manfred, :zen_api_key, env!("ZEN_API_KEY", :string?)
+
+# Telegram Bot
+config :manfred, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
+
+config :manfred, :telegram_allowed_user_id, env!("TELEGRAM_ALLOWED_USER_ID", :integer)

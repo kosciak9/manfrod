@@ -16,3 +16,6 @@ config :logger, :default_formatter,
   metadata: [:request_id]
 
 config :phoenix, :json_library, Jason
+
+# ExGram (Telegram bot)
+config :ex_gram, adapter: ExGram.Adapter.Req

@@ -29,9 +29,11 @@ defmodule Manfred.MixProject do
       {:postgrex, ">= 0.0.0"},
       {:phoenix_live_dashboard, "~> 0.8.3"},
       {:req, "~> 0.5"},
+      {:req_llm, "~> 1.4"},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"},
-      {:tidewave, "~> 0.5.4", only: [:dev]}
+      {:tidewave, "~> 0.5.4", only: [:dev]},
+      {:ex_gram, "~> 0.57"}
     ]
   end
 
