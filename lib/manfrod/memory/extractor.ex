@@ -15,23 +15,38 @@ defmodule Manfrod.Memory.Extractor do
 
   Rules:
   - Each node = one atomic fact (1-2 sentences max)
-  - Only extract long-term valuable info
+  - Only extract long-term valuable info (facts about user, decisions, preferences, context)
   - Links connect related nodes (0-indexed)
   - Return {"nodes": [], "links": []} if nothing worth remembering
+  - The conversation may contain multiple exchanges - extract from all of them
 
   Conversation:
   """
 
-  @doc "Fire-and-forget extraction. Returns :ok immediately."
-  def extract_async(user_content, assistant_content, user_id) do
-    Task.start(fn -> extract_and_store(user_content, assistant_content, user_id) end)
+  @doc """
+  Fire-and-forget batch extraction for multiple exchanges.
+  Called on conversation flush (5-min debounce).
+  """
+  def extract_batch_async(exchanges, user_id) when is_list(exchanges) do
+    Task.start(fn -> extract_and_store(exchanges, user_id) end)
     :ok
   end
 
-  @doc "Synchronous extraction for testing."
-  def extract_and_store(user_content, assistant_content, user_id) do
-    conversation = "User: #{user_content}\nAssistant: #{assistant_content}"
+  @doc "Synchronous batch extraction."
+  def extract_and_store(exchanges, user_id) when is_list(exchanges) do
+    conversation = format_exchanges(exchanges)
+    do_extract_and_store(conversation, user_id)
+  end
 
+  defp format_exchanges(exchanges) do
+    exchanges
+    |> Enum.with_index(1)
+    |> Enum.map_join("\n\n", fn {{user, assistant}, i} ->
+      "Exchange #{i}:\nUser: #{user}\nAssistant: #{assistant}"
+    end)
+  end
+
+  defp do_extract_and_store(conversation, user_id) do
     with {:ok, %{"nodes" => [_ | _] = texts, "links" => links}} <- call_llm(conversation),
          {:ok, embeddings} <- Voyage.embed(texts) do
       node_ids =

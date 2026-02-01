@@ -194,10 +194,19 @@ defmodule Manfrod.Agent do
 
   # Server Callbacks
 
+  # 5 minutes debounce before flushing conversation
+  @flush_delay :timer.minutes(5)
+
   @impl true
   def init(_opts) do
     system_message = ReqLLM.Context.system(@system_prompt)
-    {:ok, %{messages: [system_message]}}
+
+    {:ok,
+     %{
+       messages: [system_message],
+       flush_buffer: [],
+       flush_timer: nil
+     }}
   end
 
   @impl true
@@ -211,9 +220,6 @@ defmodule Manfrod.Agent do
     # Process with memory context and tools
     {response_text, new_state} = process_message(content, user_id, state)
 
-    # Async extraction (parallel embedding + storage)
-    Extractor.extract_async(content, response_text, user_id)
-
     case Sender.send(chat_id, response_text) do
       {:ok, _} ->
         Logger.info("Agent sent response to chat #{chat_id}")
@@ -222,7 +228,33 @@ defmodule Manfrod.Agent do
         Logger.error("Failed to send response to Telegram: #{inspect(reason)}")
     end
 
-    {:noreply, new_state}
+    # Buffer exchange for batch extraction
+    new_buffer = new_state.flush_buffer ++ [{content, response_text}]
+
+    # Debounce: cancel old timer, start new one
+    if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
+    timer_ref = Process.send_after(self(), {:flush, user_id}, @flush_delay)
+
+    {:noreply, %{new_state | flush_buffer: new_buffer, flush_timer: timer_ref}}
+  end
+
+  @impl true
+  def handle_info({:flush, user_id}, state) do
+    Logger.info("Flushing conversation buffer (#{length(state.flush_buffer)} exchanges)")
+
+    if state.flush_buffer != [] do
+      Extractor.extract_batch_async(state.flush_buffer, user_id)
+    end
+
+    # Reset to fresh conversation state
+    system_message = ReqLLM.Context.system(@system_prompt)
+
+    {:noreply,
+     %{
+       messages: [system_message],
+       flush_buffer: [],
+       flush_timer: nil
+     }}
   end
 
   # Private
