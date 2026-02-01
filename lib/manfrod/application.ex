@@ -9,6 +9,10 @@ defmodule Manfrod.Application do
       [
         Manfrod.Repo,
         {Phoenix.PubSub, name: Manfrod.PubSub},
+        # Event handlers (subscribe to PubSub)
+        Manfrod.Memory.FlushHandler,
+        Manfrod.Telegram.ActivityHandler,
+        # Core agent
         Manfrod.Agent,
         ManfrodWeb.Endpoint
       ] ++ telegram_children()

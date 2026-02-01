@@ -26,7 +26,9 @@ config :manfrod, ManfrodWeb.Endpoint,
     port: env!("PORT", :integer, 35233)
   ],
   secret_key_base: secret_key_base,
-  server: true
+  server: true,
+  # Allow websocket connections from Tailscale hosts
+  check_origin: :conn
 
 # Zen API (Kimi K2.5)
 config :manfrod, :zen_api_key, env!("ZEN_API_KEY", :string?)

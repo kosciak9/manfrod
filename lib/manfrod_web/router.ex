@@ -24,6 +24,7 @@ defmodule ManfrodWeb.Router do
     pipe_through :browser
 
     live "/", ChatLive
+    live "/audit", AuditLive
   end
 
   # LiveDashboard for debugging

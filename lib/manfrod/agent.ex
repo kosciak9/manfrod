@@ -1,20 +1,30 @@
 defmodule Manfrod.Agent do
   @moduledoc """
   The Agent - a GenServer with an inbox.
-  Receives messages asynchronously, thinks, acts, responds via Telegram.
+  Receives messages asynchronously, thinks, acts, responds via event bus.
 
   Manfrod can modify his own code, execute shell commands, and evaluate
   arbitrary Elixir expressions. He is self-improving and self-healing.
+
+  ## Event-driven architecture
+
+  The Agent broadcasts Activity events instead of calling handlers directly:
+  - `:thinking` - message received, starting LLM call
+  - `:working` - executing tool
+  - `:responding` - final response ready
+  - `:idle` - conversation timed out
+
+  Subscribers (Telegram.ActivityHandler, Memory.FlushHandler, AuditLive) handle
+  these events appropriately for their context.
   """
   use GenServer
 
   require Logger
 
   alias Manfrod.Code
-  alias Manfrod.Shell
+  alias Manfrod.Events
   alias Manfrod.Memory
-  alias Manfrod.Memory.Extractor
-  alias Manfrod.Telegram.Sender
+  alias Manfrod.Shell
 
   @base_url "https://opencode.ai/zen/v1"
   @model_id "kimi-k2.5-free"
@@ -125,10 +135,19 @@ defmodule Manfrod.Agent do
 
   @doc """
   Send a message to the agent asynchronously.
-  The agent will process and respond via Telegram.
+
+  The agent will process the message and broadcast Activity events.
+  Subscribers handle response delivery based on the source.
+
+  ## Required fields
+
+  - `content` - the message text
+  - `user_id` - identifier for the user
+  - `source` - origin atom (:telegram, :cron, :web, etc.)
+  - `reply_to` - opaque reference for response routing (chat_id, pid, etc.)
   """
-  def send_message(message, opts \\ []) when is_map(message) do
-    GenServer.cast(__MODULE__, {:message, message, opts})
+  def send_message(message) when is_map(message) do
+    GenServer.cast(__MODULE__, {:message, message})
   end
 
   # Tool callbacks (called by ReqLLM when LLM invokes tools)
@@ -210,41 +229,41 @@ defmodule Manfrod.Agent do
   end
 
   @impl true
-  def handle_cast({:message, message, opts}, state) do
-    %{content: content, chat_id: chat_id, user_id: user_id} = message
-    on_event = Keyword.get(opts, :on_event, fn _ -> :ok end)
+  def handle_cast({:message, message}, state) do
+    %{content: content, user_id: user_id, source: source, reply_to: reply_to} = message
 
-    Logger.info(
-      "Agent received message from #{message[:source]}: #{String.slice(content, 0, 50)}..."
-    )
+    Logger.info("Agent received message from #{source}: #{String.slice(content, 0, 50)}...")
+
+    # Build event context for broadcasts
+    event_ctx = %{user_id: user_id, source: source, reply_to: reply_to}
+
+    # Broadcast thinking activity
+    Events.broadcast(:thinking, event_ctx)
 
     # Process with memory context and tools
-    {response_text, new_state} = process_message(content, user_id, state, on_event)
+    {response_text, new_state} = process_message(content, user_id, state, event_ctx)
 
-    case Sender.send(chat_id, response_text) do
-      {:ok, _} ->
-        Logger.info("Agent sent response to chat #{chat_id}")
-
-      {:error, reason} ->
-        Logger.error("Failed to send response to Telegram: #{inspect(reason)}")
-    end
+    # Broadcast response - handlers deliver to appropriate channel
+    Events.broadcast(:responding, Map.put(event_ctx, :meta, %{content: response_text}))
+    Logger.info("Agent broadcast response for #{source}")
 
     # Buffer exchange for batch extraction
     new_buffer = new_state.flush_buffer ++ [{content, response_text}]
 
     # Debounce: cancel old timer, start new one
     if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
-    timer_ref = Process.send_after(self(), {:flush, user_id}, @flush_delay)
+    timer_ref = Process.send_after(self(), {:flush, event_ctx}, @flush_delay)
 
     {:noreply, %{new_state | flush_buffer: new_buffer, flush_timer: timer_ref}}
   end
 
   @impl true
-  def handle_info({:flush, user_id}, state) do
+  def handle_info({:flush, event_ctx}, state) do
     Logger.info("Flushing conversation buffer (#{length(state.flush_buffer)} exchanges)")
 
     if state.flush_buffer != [] do
-      Extractor.extract_batch_async(state.flush_buffer, user_id)
+      # Broadcast idle event - FlushHandler will trigger extraction
+      Events.broadcast(:idle, Map.put(event_ctx, :meta, %{exchanges: state.flush_buffer}))
     end
 
     # Reset to fresh conversation state
@@ -260,7 +279,7 @@ defmodule Manfrod.Agent do
 
   # Private
 
-  defp process_message(text, user_id, state, on_event) do
+  defp process_message(text, user_id, state, event_ctx) do
     # Retrieve relevant memory context
     memory_context = get_memory_context(text, user_id)
 
@@ -276,7 +295,7 @@ defmodule Manfrod.Agent do
     messages = state.messages ++ [user_message]
 
     # Call LLM with tools, handle tool loop
-    case call_llm_with_tools(messages, on_event) do
+    case call_llm_with_tools(messages, event_ctx) do
       {:ok, response_text, _final_messages} ->
         # Store original user message (without memory) for clean history
         clean_user_message = ReqLLM.Context.user(text)
@@ -291,10 +310,9 @@ defmodule Manfrod.Agent do
     end
   end
 
-  defp call_llm_with_tools(messages, on_event, iteration \\ 0) do
+  defp call_llm_with_tools(messages, event_ctx, iteration \\ 0) do
     # Prevent infinite tool loops
     if iteration > 10 do
-      on_event.({:error, :max_tool_iterations})
       {:error, :max_tool_iterations}
     else
       case call_llm(messages) do
@@ -303,7 +321,6 @@ defmodule Manfrod.Agent do
             :tool_calls ->
               # Execute tools and continue conversation
               tool_calls = ReqLLM.Response.tool_calls(response)
-              on_event.({:tool_calls, tool_calls})
               Logger.info("Agent executing #{length(tool_calls)} tool(s)")
 
               # Add assistant message with tool calls
@@ -313,6 +330,12 @@ defmodule Manfrod.Agent do
               # Execute each tool and add results
               messages_with_results =
                 Enum.reduce(tool_calls, messages_with_assistant, fn tool_call, msgs ->
+                  # Broadcast working activity for each tool
+                  Events.broadcast(
+                    :working,
+                    Map.put(event_ctx, :meta, %{tool: tool_call.function.name})
+                  )
+
                   result = execute_tool(tool_call)
 
                   tool_result_msg =
@@ -322,7 +345,7 @@ defmodule Manfrod.Agent do
                 end)
 
               # Continue the conversation
-              call_llm_with_tools(messages_with_results, on_event, iteration + 1)
+              call_llm_with_tools(messages_with_results, event_ctx, iteration + 1)
 
             _other ->
               # No more tools, return final text

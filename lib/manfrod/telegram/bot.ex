@@ -48,31 +48,14 @@ defmodule Manfrod.Telegram.Bot do
     if allowed?(msg) do
       Logger.info("Telegram message received: #{String.slice(text, 0, 50)}...")
 
-      chat_id = msg.chat.id
+      # Send to Agent inbox - ActivityHandler will handle typing and responses
+      Manfrod.Agent.send_message(%{
+        content: text,
+        user_id: msg.from.id,
+        source: :telegram,
+        reply_to: msg.chat.id
+      })
 
-      on_event = fn
-        {:tool_calls, calls} ->
-          Manfrod.Telegram.Sender.send(chat_id, format_tool_calls(calls))
-
-        {:error, reason} ->
-          Manfrod.Telegram.Sender.send(chat_id, "⚠️ #{inspect(reason)}")
-
-        _ ->
-          :ok
-      end
-
-      # Send to Agent inbox asynchronously
-      Manfrod.Agent.send_message(
-        %{
-          content: text,
-          chat_id: chat_id,
-          user_id: msg.from.id,
-          source: :telegram
-        },
-        on_event: on_event
-      )
-
-      # No immediate response - Agent will respond via Sender
       :ok
     else
       log_blocked(msg, "text message")
@@ -92,31 +75,4 @@ defmodule Manfrod.Telegram.Bot do
     Logger.warning("Blocked #{action} from unauthorized user: #{msg.from.id}")
     :ok
   end
-
-  defp format_tool_calls(calls) do
-    Enum.map_join(calls, "\n", fn tc ->
-      args = format_args(tc.function.arguments)
-      "🔧 #{tc.function.name}(#{args})"
-    end)
-  end
-
-  defp format_args(json) do
-    case Jason.decode(json) do
-      {:ok, map} when map == %{} ->
-        ""
-
-      {:ok, map} ->
-        map
-        |> Enum.map_join(", ", fn {_k, v} -> truncate(inspect(v)) end)
-
-      _ ->
-        "..."
-    end
-  end
-
-  defp truncate(str) when byte_size(str) > 50 do
-    String.slice(str, 0, 47) <> "..."
-  end
-
-  defp truncate(str), do: str
 end
