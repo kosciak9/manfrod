@@ -9,6 +9,17 @@ defmodule ManfrodWeb.Router do
     plug :put_secure_browser_headers
   end
 
+  pipeline :api do
+    plug :accepts, ["json"]
+  end
+
+  # Health check endpoint - no auth required
+  scope "/api", ManfrodWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :index
+  end
+
   scope "/", ManfrodWeb do
     pipe_through :browser
 

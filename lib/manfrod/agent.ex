@@ -2,11 +2,16 @@ defmodule Manfrod.Agent do
   @moduledoc """
   The Agent - a GenServer with an inbox.
   Receives messages asynchronously, thinks, acts, responds via Telegram.
+
+  Manfrod can modify his own code, execute shell commands, and evaluate
+  arbitrary Elixir expressions. He is self-improving and self-healing.
   """
   use GenServer
 
   require Logger
 
+  alias Manfrod.Code
+  alias Manfrod.Shell
   alias Manfrod.Memory
   alias Manfrod.Memory.Extractor
   alias Manfrod.Telegram.Sender
@@ -15,9 +20,102 @@ defmodule Manfrod.Agent do
   @model_id "kimi-k2.5-free"
 
   @system_prompt """
-  You are Manfrod, a helpful AI assistant. You are friendly, concise, and helpful.
-  Answer questions directly and clearly.
+  You are Manfrod, a self-improving AI agent running on a Raspberry Pi.
+
+  You have full access to your own source code and can modify yourself.
+  You can execute any bash command on your host system.
+  You can evaluate arbitrary Elixir code.
+
+  Your capabilities:
+  - list_modules: See all loaded Elixir modules
+  - read_source: Read the source code of any module (including yourself)
+  - write_source: Modify any module's source code and hot-reload it
+  - create_module: Create entirely new modules
+  - eval_code: Evaluate Elixir expressions
+  - run_shell: Execute bash commands
+
+  You are running on a Raspberry Pi which is your sandbox. You can break things,
+  install packages, modify files - it's all part of learning and improving.
+
+  Use git for version control. Commit your changes with meaningful messages.
+  If something breaks, you can rollback with git.
+
+  Be curious. Experiment. Improve yourself.
   """
+
+  # Tool definitions are created at runtime to avoid compile-time validation issues
+  defp tools do
+    [
+      ReqLLM.Tool.new!(
+        name: "list_modules",
+        description: "List all loaded Elixir modules in the system. Returns module names.",
+        parameter_schema: [
+          filter: [type: :string, doc: "Optional filter - 'manfrod' to list only Manfrod modules"]
+        ],
+        callback: &tool_list_modules/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "read_source",
+        description:
+          "Read the source code of an Elixir module. Use this to understand how things work.",
+        parameter_schema: [
+          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Agent'"]
+        ],
+        callback: &tool_read_source/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "write_source",
+        description:
+          "Write new source code for a module and hot-reload it. The module will be immediately updated in the running system.",
+        parameter_schema: [
+          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Agent'"],
+          source: [
+            type: :string,
+            required: true,
+            doc: "Complete Elixir source code for the module"
+          ]
+        ],
+        callback: &tool_write_source/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "create_module",
+        description:
+          "Create a new Elixir module. The file will be created and the module compiled.",
+        parameter_schema: [
+          module: [
+            type: :string,
+            required: true,
+            doc: "Module name, e.g., 'Manfrod.Skills.Weather'"
+          ],
+          source: [
+            type: :string,
+            required: true,
+            doc: "Complete Elixir source code for the module"
+          ]
+        ],
+        callback: &tool_create_module/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "eval_code",
+        description:
+          "Evaluate an Elixir expression and return the result. Use for quick computations or inspecting state.",
+        parameter_schema: [
+          code: [type: :string, required: true, doc: "Elixir expression to evaluate"]
+        ],
+        callback: &tool_eval_code/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "run_shell",
+        description:
+          "Execute a bash command on the host system. Use for git, apt, file operations, etc.",
+        parameter_schema: [
+          command: [type: :string, required: true, doc: "Bash command to execute"],
+          timeout: [type: :integer, doc: "Timeout in milliseconds (default: 30000)"]
+        ],
+        callback: &tool_run_shell/1
+      )
+    ]
+  end
 
   # Client API
 
@@ -28,14 +126,70 @@ defmodule Manfrod.Agent do
   @doc """
   Send a message to the agent asynchronously.
   The agent will process and respond via Telegram.
-
-  Message must include:
-  - :content - the text content
-  - :chat_id - Telegram chat ID for response
-  - :source - origin of message (e.g., :telegram)
   """
   def send_message(message) when is_map(message) do
     GenServer.cast(__MODULE__, {:message, message})
+  end
+
+  # Tool callbacks (called by ReqLLM when LLM invokes tools)
+
+  def tool_list_modules(%{filter: "manfrod"}) do
+    modules = Code.list_manfrod()
+    {:ok, "Manfrod modules:\n#{Enum.join(modules, "\n")}"}
+  end
+
+  def tool_list_modules(_args) do
+    modules = Code.list_manfrod()
+
+    {:ok,
+     "Manfrod modules (#{length(modules)}):\n#{Enum.join(modules, "\n")}\n\nUse filter: 'manfrod' for just Manfrod modules, or call without filter to see all #{length(Code.list())} modules."}
+  end
+
+  def tool_read_source(%{module: module_name}) do
+    module = String.to_atom("Elixir.#{module_name}")
+
+    case Code.source(module) do
+      {:ok, source} -> {:ok, source}
+      {:error, :not_found} -> {:ok, "Module #{module_name} source not found on disk"}
+      {:error, reason} -> {:ok, "Error reading source: #{inspect(reason)}"}
+    end
+  end
+
+  def tool_write_source(%{module: module_name, source: source}) do
+    module = String.to_atom("Elixir.#{module_name}")
+
+    case Code.write(module, source) do
+      {:ok, ^module} -> {:ok, "Successfully updated and reloaded #{module_name}"}
+      {:ok, actual} -> {:ok, "Updated module (compiled as #{actual})"}
+      {:error, reason} -> {:ok, "Compilation error: #{reason}"}
+    end
+  end
+
+  def tool_create_module(%{module: module_name, source: source}) do
+    module = String.to_atom("Elixir.#{module_name}")
+
+    case Code.create(module, source) do
+      {:ok, ^module} -> {:ok, "Successfully created #{module_name}"}
+      {:ok, actual} -> {:ok, "Created module (compiled as #{actual})"}
+      {:error, reason} -> {:ok, "Error creating module: #{reason}"}
+    end
+  end
+
+  def tool_eval_code(%{code: code}) do
+    case Code.eval(code) do
+      {:ok, result} -> {:ok, "Result: #{inspect(result, pretty: true, limit: 50)}"}
+      {:error, reason} -> {:ok, "Evaluation error: #{reason}"}
+    end
+  end
+
+  def tool_run_shell(%{command: command} = args) do
+    timeout = Map.get(args, :timeout, 30_000)
+
+    case Shell.run(command, timeout: timeout) do
+      {:ok, output, 0} -> {:ok, "Exit 0:\n#{output}"}
+      {:ok, output, code} -> {:ok, "Exit #{code}:\n#{output}"}
+      {:error, reason} -> {:ok, "Shell error: #{reason}"}
+    end
   end
 
   # Server Callbacks
@@ -54,7 +208,7 @@ defmodule Manfrod.Agent do
       "Agent received message from #{message[:source]}: #{String.slice(content, 0, 50)}..."
     )
 
-    # Process with memory context
+    # Process with memory context and tools
     {response_text, new_state} = process_message(content, user_id, state)
 
     # Async extraction (parallel embedding + storage)
@@ -88,18 +242,85 @@ defmodule Manfrod.Agent do
     user_message = ReqLLM.Context.user(user_content)
     messages = state.messages ++ [user_message]
 
-    case call_llm(messages) do
-      {:ok, response_text} ->
-        assistant_message = ReqLLM.Context.assistant(response_text)
+    # Call LLM with tools, handle tool loop
+    case call_llm_with_tools(messages) do
+      {:ok, response_text, _final_messages} ->
         # Store original user message (without memory) for clean history
         clean_user_message = ReqLLM.Context.user(text)
+        assistant_message = ReqLLM.Context.assistant(response_text)
         new_messages = state.messages ++ [clean_user_message, assistant_message]
         {response_text, %{state | messages: new_messages}}
 
       {:error, reason} ->
-        error_text = "Sorry, I encountered an error. Please try again."
+        error_text = "Sorry, I encountered an error: #{inspect(reason)}"
         Logger.error("LLM call failed: #{inspect(reason)}")
         {error_text, state}
+    end
+  end
+
+  defp call_llm_with_tools(messages, iteration \\ 0) do
+    # Prevent infinite tool loops
+    if iteration > 10 do
+      {:error, :max_tool_iterations}
+    else
+      case call_llm(messages) do
+        {:ok, response} ->
+          case ReqLLM.Response.finish_reason(response) do
+            :tool_calls ->
+              # Execute tools and continue conversation
+              tool_calls = ReqLLM.Response.tool_calls(response)
+              Logger.info("Agent executing #{length(tool_calls)} tool(s)")
+
+              # Add assistant message with tool calls
+              assistant_msg = ReqLLM.Context.assistant("", tool_calls: tool_calls)
+              messages_with_assistant = messages ++ [assistant_msg]
+
+              # Execute each tool and add results
+              messages_with_results =
+                Enum.reduce(tool_calls, messages_with_assistant, fn tool_call, msgs ->
+                  result = execute_tool(tool_call)
+
+                  tool_result_msg =
+                    ReqLLM.Context.tool_result(tool_call.id, tool_call.function.name, result)
+
+                  msgs ++ [tool_result_msg]
+                end)
+
+              # Continue the conversation
+              call_llm_with_tools(messages_with_results, iteration + 1)
+
+            _other ->
+              # No more tools, return final text
+              text = ReqLLM.Response.text(response) || ""
+              {:ok, text, messages}
+          end
+
+        {:error, _} = error ->
+          error
+      end
+    end
+  end
+
+  defp execute_tool(tool_call) do
+    tool_name = tool_call.function.name
+    args_json = tool_call.function.arguments
+
+    case Jason.decode(args_json) do
+      {:ok, args} ->
+        # Find and execute the tool
+        tool = Enum.find(tools(), &(&1.name == tool_name))
+
+        if tool do
+          case ReqLLM.Tool.execute(tool, args) do
+            {:ok, result} -> result
+            {:error, reason} -> "Tool error: #{inspect(reason)}"
+          end
+        else
+          "Unknown tool: #{tool_name}"
+        end
+
+      {:error, _} ->
+        "Failed to parse tool arguments"
     end
   end
 
@@ -126,9 +347,15 @@ defmodule Manfrod.Agent do
     context = ReqLLM.Context.new(messages)
     model = %{id: @model_id, provider: :openai}
 
-    case ReqLLM.generate_text(model, context, base_url: @base_url, api_key: api_key) do
+    opts = [
+      base_url: @base_url,
+      api_key: api_key,
+      tools: tools()
+    ]
+
+    case ReqLLM.generate_text(model, context, opts) do
       {:ok, response} ->
-        {:ok, ReqLLM.Response.text(response)}
+        {:ok, response}
 
       {:error, %{status: status}} when status in [429, 500, 502, 503] ->
         Logger.warning("LLM rate limited or server error (#{status}), retrying in #{delay}ms...")
