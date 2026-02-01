@@ -36,6 +36,8 @@ base_packages:
   - unzip
   - python
   - python-pip
+  - erlang
+  - elixir
 
 # =============================================================================
 # Container Runtime
@@ -63,6 +65,13 @@ paradedb_volume_name: manfrod_postgres_data
 postgres_user: manfrod
 postgres_db: manfrod_prod
 postgres_port: 5432
+
+# =============================================================================
+# Manfrod Application
+# =============================================================================
+
+app_dir: /home/manfrod/agent
+app_port: 4000
 
 # =============================================================================
 # Tailscale Configuration

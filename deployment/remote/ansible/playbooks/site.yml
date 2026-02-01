@@ -155,6 +155,45 @@
         update_cache: true
       become: true
 
+    - name: Install shadow package (for newuidmap/newgidmap)
+      community.general.pacman:
+        name: shadow
+        state: present
+      become: true
+
+    - name: Set capabilities on newuidmap
+      community.general.capabilities:
+        path: /usr/bin/newuidmap
+        capability: cap_setuid+ep
+        state: present
+      become: true
+
+    - name: Set capabilities on newgidmap
+      community.general.capabilities:
+        path: /usr/bin/newgidmap
+        capability: cap_setgid+ep
+        state: present
+
+      become: true
+
+    - name: Configure subuid for app user
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ app_user }}:"
+        line: "{{ app_user }}:231072:65536"
+        create: true
+        mode: "0644"
+      become: true
+
+    - name: Configure subgid for app user
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ app_user }}:"
+        line: "{{ app_user }}:231072:65536"
+        create: true
+        mode: "0644"
+      become: true
+
     - name: Enable lingering for manfrod user (required for user services without login)
       ansible.builtin.command: loginctl enable-linger {{ app_user }}
       become: true
@@ -179,18 +218,149 @@
       become: true
 
     # =========================================================================
-    # ParadeDB Container Setup (SKIPPED - manual setup required)
+    # ParadeDB Container Setup
     # =========================================================================
-    # TODO: Set up ParadeDB as rootless container under manfrod user
-    # Run manually as manfrod:
-    #   podman volume create manfrod_postgres_data
-    #   podman run -d --name manfrod-db \
-    #     -e POSTGRES_USER=manfrod \
-    #     -e POSTGRES_PASSWORD=<password> \
-    #     -e POSTGRES_DB=manfrod_prod \
-    #     -p 127.0.0.1:5432:5432 \
-    #     -v manfrod_postgres_data:/var/lib/postgresql/data \
-    #     docker.io/paradedb/paradedb:v0.21.5-pg18
+
+    - name: Create /etc/manfrod config directory
+      ansible.builtin.file:
+        path: /etc/manfrod
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      become: true
+
+    - name: Deploy ParadeDB environment file
+      ansible.builtin.template:
+        src: ../templates/paradedb.env.j2
+        dest: /etc/manfrod/paradedb.env
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+      become: true
+      notify: Restart paradedb
+
+    - name: Create ParadeDB podman volume
+      containers.podman.podman_volume:
+        name: "{{ paradedb_volume_name }}"
+        state: present
+      become: true
+      become_user: "{{ app_user }}"
+
+    - name: Deploy ParadeDB systemd service
+      ansible.builtin.template:
+        src: ../templates/paradedb.service.j2
+        dest: /etc/systemd/system/paradedb.service
+        mode: "0644"
+      become: true
+      notify: Restart paradedb
+
+    - name: Enable and start ParadeDB service
+      ansible.builtin.systemd:
+        name: paradedb
+        state: started
+        enabled: true
+        daemon_reload: true
+      become: true
+
+    # =========================================================================
+    # Elixir Toolchain Setup
+    # =========================================================================
+
+    - name: Install Hex package manager
+      ansible.builtin.command: mix local.hex --force
+      become: true
+      become_user: "{{ app_user }}"
+      register: hex_install
+      changed_when: "'* creating' in hex_install.stdout"
+
+    - name: Install Rebar build tool
+      ansible.builtin.command: mix local.rebar --force
+      become: true
+      become_user: "{{ app_user }}"
+      register: rebar_install
+      changed_when: "'* creating' in rebar_install.stdout"
+
+    # =========================================================================
+    # Manfrod Application Deployment
+    # =========================================================================
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      become: true
+
+    - name: Sync Manfrod code
+      ansible.posix.synchronize:
+        src: "{{ playbook_dir }}/../../../../"
+        dest: "{{ app_dir }}/"
+        delete: true
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=_build"
+          - "--exclude=deps"
+          - "--exclude=.elixir_ls"
+          - "--exclude=deployment/remote/ansible/.vault_pass"
+      become: true
+      become_user: "{{ app_user }}"
+      notify: Restart manfrod
+
+    - name: Deploy .env file
+      ansible.builtin.template:
+        src: ../templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+      become: true
+      notify: Restart manfrod
+
+    - name: Install Elixir dependencies
+      ansible.builtin.command: mix deps.get
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      register: deps_get
+      changed_when: "'New' in deps_get.stdout or 'Resolving' in deps_get.stdout"
+
+    - name: Compile application
+      ansible.builtin.command: mix compile
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      register: compile_result
+      changed_when: "'Compiling' in compile_result.stdout"
+
+    - name: Run database migrations
+      ansible.builtin.command: mix ecto.migrate
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      register: migrate_result
+      changed_when: "'migrated' in migrate_result.stdout"
+
+    - name: Deploy Manfrod systemd service
+      ansible.builtin.template:
+        src: ../templates/manfrod.service.j2
+        dest: /etc/systemd/system/manfrod.service
+        mode: "0644"
+      become: true
+      notify: Restart manfrod
+
+    - name: Enable and start Manfrod service
+      ansible.builtin.systemd:
+        name: manfrod
+        state: started
+        enabled: true
+        daemon_reload: true
+      become: true
 
     # =========================================================================
     # Tailscale Installation and Configuration
@@ -321,6 +491,20 @@
         state: restarted
       become: true
 
+    - name: Restart paradedb
+      ansible.builtin.systemd:
+        name: paradedb
+        state: restarted
+        daemon_reload: true
+      become: true
+
+    - name: Restart manfrod
+      ansible.builtin.systemd:
+        name: manfrod
+        state: restarted
+        daemon_reload: true
+      become: true
+
   post_tasks:
     - name: Display deployment summary
       ansible.builtin.debug:
@@ -334,23 +518,17 @@
             - SSH: ssh {{ admin_user }}@{{ tailscale_ip.stdout }}
             - Or use MagicDNS: ssh {{ admin_user }}@{{ hostname }}
 
-          ParadeDB (manual setup required):
-            sudo -u {{ app_user }} -i
-            podman volume create {{ paradedb_volume_name }}
-            podman run -d --name {{ paradedb_container_name }} \
-              -e POSTGRES_USER={{ postgres_user }} \
-              -e POSTGRES_PASSWORD=<password> \
-              -e POSTGRES_DB={{ postgres_db }} \
-              -p 127.0.0.1:{{ postgres_port }}:5432 \
-              -v {{ paradedb_volume_name }}:/var/lib/postgresql/data \
-              {{ paradedb_image }}
-
           Services:
             - Tailscale: systemctl status tailscaled
+            - ParadeDB:  systemctl status paradedb
+            - Manfrod:   systemctl status manfrod
+
+          Application:
+            - URL: http://{{ tailscale_ip.stdout }}:{{ app_port }}
+            - Code: {{ app_dir }}
+            - Logs: journalctl -u manfrod -f
 
           Next steps:
-            1. Set up ParadeDB container as manfrod user (see above)
-            2. Disable SSH port 22 in nftables.conf after confirming Tailscale SSH works
-            3. Deploy Manfrod application
+            1. Disable SSH port 22 in nftables.conf after confirming Tailscale SSH works
 
           ========================================

@@ -1,0 +1,16 @@
+[Unit]
+Description=Manfrod Phoenix App
+After=paradedb.service
+Requires=paradedb.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_dir }}
+ExecStart=/usr/bin/mix phx.server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
