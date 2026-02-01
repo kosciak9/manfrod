@@ -127,8 +127,8 @@ defmodule Manfrod.Agent do
   Send a message to the agent asynchronously.
   The agent will process and respond via Telegram.
   """
-  def send_message(message) when is_map(message) do
-    GenServer.cast(__MODULE__, {:message, message})
+  def send_message(message, opts \\ []) when is_map(message) do
+    GenServer.cast(__MODULE__, {:message, message, opts})
   end
 
   # Tool callbacks (called by ReqLLM when LLM invokes tools)
@@ -210,15 +210,16 @@ defmodule Manfrod.Agent do
   end
 
   @impl true
-  def handle_cast({:message, message}, state) do
+  def handle_cast({:message, message, opts}, state) do
     %{content: content, chat_id: chat_id, user_id: user_id} = message
+    on_event = Keyword.get(opts, :on_event, fn _ -> :ok end)
 
     Logger.info(
       "Agent received message from #{message[:source]}: #{String.slice(content, 0, 50)}..."
     )
 
     # Process with memory context and tools
-    {response_text, new_state} = process_message(content, user_id, state)
+    {response_text, new_state} = process_message(content, user_id, state, on_event)
 
     case Sender.send(chat_id, response_text) do
       {:ok, _} ->
@@ -259,7 +260,7 @@ defmodule Manfrod.Agent do
 
   # Private
 
-  defp process_message(text, user_id, state) do
+  defp process_message(text, user_id, state, on_event) do
     # Retrieve relevant memory context
     memory_context = get_memory_context(text, user_id)
 
@@ -275,7 +276,7 @@ defmodule Manfrod.Agent do
     messages = state.messages ++ [user_message]
 
     # Call LLM with tools, handle tool loop
-    case call_llm_with_tools(messages) do
+    case call_llm_with_tools(messages, on_event) do
       {:ok, response_text, _final_messages} ->
         # Store original user message (without memory) for clean history
         clean_user_message = ReqLLM.Context.user(text)
@@ -290,9 +291,10 @@ defmodule Manfrod.Agent do
     end
   end
 
-  defp call_llm_with_tools(messages, iteration \\ 0) do
+  defp call_llm_with_tools(messages, on_event, iteration \\ 0) do
     # Prevent infinite tool loops
     if iteration > 10 do
+      on_event.({:error, :max_tool_iterations})
       {:error, :max_tool_iterations}
     else
       case call_llm(messages) do
@@ -301,6 +303,7 @@ defmodule Manfrod.Agent do
             :tool_calls ->
               # Execute tools and continue conversation
               tool_calls = ReqLLM.Response.tool_calls(response)
+              on_event.({:tool_calls, tool_calls})
               Logger.info("Agent executing #{length(tool_calls)} tool(s)")
 
               # Add assistant message with tool calls
@@ -319,7 +322,7 @@ defmodule Manfrod.Agent do
                 end)
 
               # Continue the conversation
-              call_llm_with_tools(messages_with_results, iteration + 1)
+              call_llm_with_tools(messages_with_results, on_event, iteration + 1)
 
             _other ->
               # No more tools, return final text
@@ -367,7 +370,7 @@ defmodule Manfrod.Agent do
   end
 
   defp call_llm(messages) do
-    call_llm_with_retry(messages, _retries = 3, _delay = 1000)
+    call_llm_with_retry(messages, _retries = 5, _delay = 2000)
   end
 
   defp call_llm_with_retry(_messages, 0, _delay) do
