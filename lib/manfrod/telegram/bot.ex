@@ -17,20 +17,20 @@ defmodule Manfrod.Telegram.Bot do
   def bot, do: @bot
 
   # Handle /start command
-  def handle({:command, "start", msg}, context) do
-    if allowed?(msg) do
+  def handle({:command, "start", message}, context) do
+    if allowed?(message) do
       answer(
         context,
         "Hello! I'm Manfrod, your AI assistant. Send me a message and I'll respond."
       )
     else
-      log_blocked(msg, "/start")
+      log_blocked(message, "/start")
     end
   end
 
   # Handle /help command
-  def handle({:command, "help", msg}, context) do
-    if allowed?(msg) do
+  def handle({:command, "help", message}, context) do
+    if allowed?(message) do
       answer(context, """
       I'm Manfrod, an AI assistant.
 
@@ -42,31 +42,31 @@ defmodule Manfrod.Telegram.Bot do
       /idle - Close conversation and save notes
       """)
     else
-      log_blocked(msg, "/help")
+      log_blocked(message, "/help")
     end
   end
 
   # Handle /idle command - manually trigger conversation close
-  def handle({:command, "idle", msg}, _context) do
-    if allowed?(msg) do
-      Manfrod.Agent.trigger_idle(%{source: :telegram, reply_to: msg.chat.id})
+  def handle({:command, "idle", message}, _context) do
+    if allowed?(message) do
+      Manfrod.Agent.trigger_idle(%{source: :telegram, reply_to: message.chat.id})
       :ok
     else
-      log_blocked(msg, "/idle")
+      log_blocked(message, "/idle")
     end
   end
 
   # Handle regular text messages
-  def handle({:text, text, msg}, _context) do
-    if allowed?(msg) do
+  def handle({:text, text, message}, _context) do
+    if allowed?(message) do
       # Broadcast message received event for activity feed
       Events.broadcast(:message_received, %{
         source: :telegram,
         meta: %{
           content: text,
-          from_id: msg.from.id,
-          chat_id: msg.chat.id,
-          message_id: msg.message_id
+          from_id: message.from.id,
+          chat_id: message.chat.id,
+          message_id: message.message_id
         }
       })
 
@@ -74,12 +74,12 @@ defmodule Manfrod.Telegram.Bot do
       Manfrod.Agent.send_message(%{
         content: text,
         source: :telegram,
-        reply_to: msg.chat.id
+        reply_to: message.chat.id
       })
 
       :ok
     else
-      log_blocked(msg, "text message")
+      log_blocked(message, "text message")
     end
   end
 
@@ -88,12 +88,12 @@ defmodule Manfrod.Telegram.Bot do
     :ok
   end
 
-  defp allowed?(msg) do
-    msg.from.id == Application.get_env(:manfrod, :telegram_allowed_user_id)
+  defp allowed?(message) do
+    message.from.id == Application.get_env(:manfrod, :telegram_allowed_user_id)
   end
 
-  defp log_blocked(msg, action) do
-    Logger.warning("Blocked #{action} from unauthorized user: #{msg.from.id}")
+  defp log_blocked(message, action) do
+    Logger.warning("Blocked #{action} from unauthorized user: #{message.from.id}")
     :ok
   end
 end

@@ -22,12 +22,12 @@ defmodule Manfrod.Events.LogHandler do
 
   # Required callback - handles each log event
   @impl true
-  def log(%{level: level, msg: msg, meta: meta}, _config) do
+  def log(%{level: level, msg: log_message, meta: meta}, _config) do
     # Skip logs that would cause infinite loops
-    if should_skip?(meta, msg) do
+    if should_skip?(meta, log_message) do
       :ok
     else
-      activity = build_activity(level, msg, meta)
+      activity = build_activity(level, log_message, meta)
       broadcast(activity)
     end
   end
@@ -56,9 +56,9 @@ defmodule Manfrod.Events.LogHandler do
 
   # --- Private Functions ---
 
-  defp should_skip?(meta, msg) do
+  defp should_skip?(meta, log_message) do
     # Skip logs from internal modules
-    skip_by_module?(meta) or skip_audit_events_query?(msg)
+    skip_by_module?(meta) or skip_audit_events_query?(log_message)
   end
 
   defp skip_by_module?(meta) do
@@ -75,8 +75,8 @@ defmodule Manfrod.Events.LogHandler do
 
   # Skip Ecto queries on audit_events table to prevent infinite loop
   defp skip_audit_events_query?({:string, chardata}) do
-    msg = IO.chardata_to_string(chardata)
-    String.contains?(msg, "audit_events")
+    log_message = IO.chardata_to_string(chardata)
+    String.contains?(log_message, "audit_events")
   end
 
   defp skip_audit_events_query?({:report, %{query: query}}) when is_binary(query) do
@@ -85,7 +85,7 @@ defmodule Manfrod.Events.LogHandler do
 
   defp skip_audit_events_query?(_), do: false
 
-  defp build_activity(level, msg, meta) do
+  defp build_activity(level, log_message, meta) do
     %Activity{
       id: generate_id(),
       type: :log,
@@ -93,7 +93,7 @@ defmodule Manfrod.Events.LogHandler do
       reply_to: nil,
       meta: %{
         level: level,
-        message: format_message(msg),
+        message: format_message(log_message),
         module: extract_module(meta),
         function: extract_function(meta),
         file: meta[:file],

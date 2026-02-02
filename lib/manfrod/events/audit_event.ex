@@ -45,8 +45,8 @@ defmodule Manfrod.Events.AuditEvent do
   def to_activity(%__MODULE__{} = event) do
     %Activity{
       id: event.id,
-      type: String.to_existing_atom(event.type),
-      source: if(event.source, do: String.to_existing_atom(event.source)),
+      type: String.to_atom(event.type),
+      source: if(event.source, do: String.to_atom(event.source)),
       reply_to: nil,
       meta: atomize_meta(event.meta),
       timestamp: event.timestamp
@@ -67,6 +67,6 @@ defmodule Manfrod.Events.AuditEvent do
   defp atomize_meta(nil), do: %{}
 
   defp atomize_meta(meta) when is_map(meta) do
-    Map.new(meta, fn {k, v} -> {String.to_existing_atom(k), v} end)
+    Map.new(meta, fn {k, v} -> {String.to_atom(k), v} end)
   end
 end

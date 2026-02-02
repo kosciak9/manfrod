@@ -85,40 +85,47 @@ defmodule ManfrodWeb.ActivityLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="activity-container">
-        <div class="activity-header">
-          <span class="activity-title">manfrod activity</span>
-          <div class="activity-controls">
-            <label class="log-toggle">
+      <div class="h-screen flex flex-col p-4 font-mono text-sm leading-relaxed bg-[#1F1F28] text-[#DCD7BA]">
+        <div class="flex justify-between items-center pb-3 border-b border-[#363646] mb-3">
+          <span class="text-[#7E9CD8] font-semibold">manfrod activity</span>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-1.5 text-[#727169] cursor-pointer text-xs">
               <input
                 type="checkbox"
                 checked={@show_all_logs}
                 phx-click="toggle_all_logs"
+                class="cursor-pointer"
               />
               <span>show all logs</span>
             </label>
-            <span class="activity-status">
+            <span class="text-[#727169]">
               <%= length(@events) %> events
             </span>
           </div>
         </div>
-        <div class="activity-log" id="activity-log">
+        <div class="flex-1 overflow-y-auto flex flex-col" id="activity-log">
           <%= for event <- @events do %>
             <div
-              class={"activity-line #{type_class(event)} #{if MapSet.member?(@expanded, event.id), do: "expanded", else: ""}"}
+              class={[
+                "border-b border-[#2A2A37] cursor-pointer hover:bg-[#2A2A37]",
+                type_class(event),
+                if(MapSet.member?(@expanded, event.id), do: "expanded")
+              ]}
               id={"event-#{event.id}"}
               phx-click="toggle_expand"
               phx-value-id={event.id}
             >
-              <div class="activity-line-main">
-                <span class="ts"><%= format_time(event.timestamp) %></span>
-                <span class={"type #{type_class(event)}"}><%= format_type(event) %></span>
-                <span class={"source source-#{event.source}"}><%= event.source || "-" %></span>
-                <span class="detail"><%= format_detail(event) %></span>
+              <div class="grid grid-cols-[80px_100px_70px_minmax(0,1fr)] gap-3 py-1">
+                <span class="text-[#727169]"><%= format_time(event.timestamp) %></span>
+                <span class={"font-semibold #{type_class(event)}"}><%= format_type(event) %></span>
+                <span class="text-[#7FB4CA]"><%= event.source || "-" %></span>
+                <span class="text-[#C8C093] overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+                  <%= format_detail(event) %>
+                </span>
               </div>
               <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
-                <div class="activity-line-expanded">
-                  <pre><%= format_expanded(event) %></pre>
+                <div class="py-2 pl-[92px] border-t border-dashed border-[#363646]">
+                  <pre class="m-0 whitespace-pre-wrap break-all text-xs text-[#C8C093] max-h-[300px] overflow-y-auto"><%= format_expanded(event) %></pre>
                 </div>
               <% end %>
             </div>
@@ -141,180 +148,27 @@ defmodule ManfrodWeb.ActivityLive do
         padding: 0 !important;
       }
 
-      .activity-container {
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
-        padding: 16px;
-        font-family: 'Overpass Mono', monospace;
-        font-size: 14px;
-        line-height: 1.5;
-        background: #1F1F28;
-        color: #DCD7BA;
-      }
-
-      .activity-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 12px;
-        border-bottom: 1px solid #363646;
-        margin-bottom: 12px;
-      }
-
-      .activity-title {
-        color: #7E9CD8;
-        font-weight: 600;
-      }
-
-      .activity-controls {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-      }
-
-      .log-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        color: #727169;
-        cursor: pointer;
-        font-size: 12px;
-      }
-
-      .log-toggle input {
-        cursor: pointer;
-      }
-
-      .activity-status {
-        color: #727169;
-      }
-
-      .activity-log {
-        flex: 1;
-        overflow-y: auto;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .activity-line {
-        border-bottom: 1px solid #2A2A37;
-        cursor: pointer;
-      }
-
-      .activity-line:hover {
-        background: #2A2A37;
-      }
-
-      .activity-line-main {
-        display: flex;
-        gap: 12px;
-        padding: 4px 0;
-      }
-
-      .activity-line-expanded {
-        padding: 8px 0 8px 92px;
-        border-top: 1px dashed #363646;
-      }
-
-      .activity-line-expanded pre {
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-all;
-        font-size: 12px;
-        color: #C8C093;
-        max-height: 300px;
-        overflow-y: auto;
-      }
-
-      .ts {
-        color: #727169;
-        flex-shrink: 0;
-        width: 80px;
-      }
-
-      .type {
-        flex-shrink: 0;
-        width: 100px;
-        font-weight: 600;
-      }
-
       /* Event type colors */
-      .type-thinking { color: #E6C384; }
-      .type-narrating { color: #E6C384; }
+      .type-thinking, .type-narrating { color: #E6C384; }
       .type-responding { color: #98BB6C; }
       .type-idle { color: #727169; }
-
       .type-message_received { color: #7FB4CA; }
-
-      .type-action_started { color: #957FB8; }
-      .type-action_completed { color: #957FB8; }
+      .type-action_started, .type-action_completed { color: #957FB8; }
       .type-action_completed.success { color: #98BB6C; }
       .type-action_completed.failure { color: #E82424; }
-
-      .type-log { color: #727169; }
-      .type-log-debug { color: #727169; }
+      .type-log, .type-log-debug { color: #727169; }
       .type-log-info { color: #7FB4CA; }
       .type-log-warning { color: #FF9E3B; }
       .type-log-error { color: #E82424; }
-
-      .type-memory_searched,
-      .type-memory_node_created,
-      .type-memory_link_created,
-      .type-memory_node_processed { color: #7AA89F; }
-
-      .type-extraction_started,
-      .type-extraction_completed { color: #7AA89F; }
-      .type-extraction_failed { color: #E82424; }
-
-      .type-retrospection_started,
-      .type-retrospection_completed { color: #7AA89F; }
-      .type-retrospection_failed { color: #E82424; }
-
-      .source {
-        flex-shrink: 0;
-        width: 70px;
-        color: #7FB4CA;
-      }
-
-      .detail {
-        color: #C8C093;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        flex: 1;
-      }
+      .type-memory_searched, .type-memory_node_created,
+      .type-memory_link_created, .type-memory_node_processed,
+      .type-extraction_started, .type-extraction_completed,
+      .type-retrospection_started, .type-retrospection_completed { color: #7AA89F; }
+      .type-extraction_failed, .type-retrospection_failed { color: #E82424; }
 
       /* Error/warning line highlights */
-      .activity-line.type-log-error {
-        background: rgba(232, 36, 36, 0.1);
-      }
-
-      .activity-line.type-log-warning {
-        background: rgba(255, 158, 59, 0.05);
-      }
-
-      /* Scrollbar styling */
-      .activity-log::-webkit-scrollbar,
-      .activity-line-expanded pre::-webkit-scrollbar {
-        width: 8px;
-      }
-
-      .activity-log::-webkit-scrollbar-track,
-      .activity-line-expanded pre::-webkit-scrollbar-track {
-        background: #1F1F28;
-      }
-
-      .activity-log::-webkit-scrollbar-thumb,
-      .activity-line-expanded pre::-webkit-scrollbar-thumb {
-        background: #363646;
-        border-radius: 4px;
-      }
-
-      .activity-log::-webkit-scrollbar-thumb:hover,
-      .activity-line-expanded pre::-webkit-scrollbar-thumb:hover {
-        background: #54546D;
-      }
+      .type-log-error { background: rgba(232, 36, 36, 0.1); }
+      .type-log-warning { background: rgba(255, 158, 59, 0.05); }
     </style>
     """
   end
@@ -403,16 +257,16 @@ defmodule ManfrodWeb.ActivityLive do
   defp has_expandable_content?(%Activity{type: :action_started}), do: true
   defp has_expandable_content?(%Activity{type: :action_completed}), do: true
 
-  defp has_expandable_content?(%Activity{type: :log, meta: %{stacktrace: st}})
-       when st != "" and not is_nil(st),
+  defp has_expandable_content?(%Activity{type: :log, meta: %{stacktrace: stacktrace}})
+       when stacktrace != "" and not is_nil(stacktrace),
        do: true
 
-  defp has_expandable_content?(%Activity{type: :log, meta: %{message: m}})
-       when is_binary(m) and byte_size(m) > 100,
+  defp has_expandable_content?(%Activity{type: :log, meta: %{message: message}})
+       when is_binary(message) and byte_size(message) > 100,
        do: true
 
-  defp has_expandable_content?(%Activity{type: :log, meta: %{message: m}})
-       when is_list(m) and length(m) > 100,
+  defp has_expandable_content?(%Activity{type: :log, meta: %{message: message}})
+       when is_list(message) and length(message) > 100,
        do: true
 
   defp has_expandable_content?(%Activity{type: :message_received}), do: true

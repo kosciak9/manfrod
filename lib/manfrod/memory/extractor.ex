@@ -116,9 +116,9 @@ defmodule Manfrod.Memory.Extractor do
 
   defp format_messages(messages) do
     messages
-    |> Enum.map(fn msg ->
-      role = if msg.role == "user", do: "User", else: "Assistant"
-      "#{role}: #{msg.content}"
+    |> Enum.map(fn message ->
+      role = if message.role == "user", do: "User", else: "Assistant"
+      "#{role}: #{message.content}"
     end)
     |> Enum.join("\n\n")
   end
