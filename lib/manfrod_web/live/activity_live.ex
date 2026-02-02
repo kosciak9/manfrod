@@ -85,29 +85,44 @@ defmodule ManfrodWeb.ActivityLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="h-screen flex flex-col p-4 font-mono text-sm leading-relaxed bg-[#1F1F28] text-[#DCD7BA]">
-        <div class="flex justify-between items-center pb-3 border-b border-[#363646] mb-3">
-          <span class="text-[#7E9CD8] font-semibold">manfrod activity</span>
-          <div class="flex items-center gap-4">
-            <label class="flex items-center gap-1.5 text-[#727169] cursor-pointer text-xs">
-              <input
-                type="checkbox"
-                checked={@show_all_logs}
-                phx-click="toggle_all_logs"
-                class="cursor-pointer"
-              />
-              <span>show all logs</span>
-            </label>
-            <span class="text-[#727169]">
-              <%= length(@events) %> events
-            </span>
+      <div class="h-screen flex flex-col font-mono text-sm bg-[#1F1F28] text-[#DCD7BA]">
+        <%!-- Navbar --%>
+        <header class="sticky top-0 z-10 bg-[#16161D] border-b border-[#363646] px-4 py-3">
+          <div class="flex justify-between items-center">
+            <h1 class="text-[#7E9CD8] font-semibold text-base tracking-wide">manfrod activity</h1>
+            <div class="flex items-center gap-6">
+              <label class="flex items-center gap-2 text-[#727169] cursor-pointer text-xs hover:text-[#DCD7BA] transition-colors">
+                <input
+                  type="checkbox"
+                  checked={@show_all_logs}
+                  phx-click="toggle_all_logs"
+                  class="cursor-pointer accent-[#7E9CD8]"
+                />
+                <span>show all logs</span>
+              </label>
+              <span class="text-[#54546D] text-xs">
+                <%= length(@events) %> events
+              </span>
+            </div>
+          </div>
+        </header>
+
+        <%!-- Column Headers --%>
+        <div class="sticky top-[53px] z-10 bg-[#1F1F28] border-b border-[#363646] px-4">
+          <div class="grid grid-cols-[70px_90px_80px_minmax(0,1fr)] gap-4 py-2 text-xs text-[#54546D] uppercase tracking-wider">
+            <span>Time</span>
+            <span>Type</span>
+            <span>Source</span>
+            <span>Details</span>
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto flex flex-col" id="activity-log">
+
+        <%!-- Event List --%>
+        <div class="flex-1 overflow-y-auto" id="activity-log">
           <%= for event <- @events do %>
             <div
               class={[
-                "border-b border-[#2A2A37] cursor-pointer hover:bg-[#2A2A37]",
+                "event-row px-4 cursor-pointer transition-colors",
                 type_class(event),
                 if(MapSet.member?(@expanded, event.id), do: "expanded")
               ]}
@@ -115,8 +130,8 @@ defmodule ManfrodWeb.ActivityLive do
               phx-click="toggle_expand"
               phx-value-id={event.id}
             >
-              <div class="grid grid-cols-[80px_100px_70px_minmax(0,1fr)] gap-3 py-1">
-                <span class="text-[#727169]"><%= format_time(event.timestamp) %></span>
+              <div class="grid grid-cols-[70px_90px_80px_minmax(0,1fr)] gap-4 py-2 border-b border-[#2A2A37]">
+                <span class="text-[#727169] tabular-nums"><%= format_time(event.timestamp) %></span>
                 <span class={"font-semibold #{type_class(event)}"}><%= format_type(event) %></span>
                 <span class="text-[#7FB4CA]"><%= event.source || "-" %></span>
                 <span class="text-[#C8C093] overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
@@ -124,8 +139,8 @@ defmodule ManfrodWeb.ActivityLive do
                 </span>
               </div>
               <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
-                <div class="py-2 pl-[92px] border-t border-dashed border-[#363646]">
-                  <pre class="m-0 whitespace-pre-wrap break-all text-xs text-[#C8C093] max-h-[300px] overflow-y-auto"><%= format_expanded(event) %></pre>
+                <div class="py-3 pl-[166px] border-b border-[#2A2A37] bg-[#1A1A22]">
+                  <pre class="m-0 whitespace-pre-wrap break-all text-xs text-[#C8C093] max-h-[300px] overflow-y-auto leading-relaxed"><%= format_expanded(event) %></pre>
                 </div>
               <% end %>
             </div>
@@ -148,6 +163,11 @@ defmodule ManfrodWeb.ActivityLive do
         padding: 0 !important;
       }
 
+      /* Row hover */
+      .event-row:hover { background: #2A2A37; }
+      .event-row.type-log-error:hover { background: rgba(232, 36, 36, 0.15); }
+      .event-row.type-log-warning:hover { background: rgba(255, 158, 59, 0.1); }
+
       /* Event type colors */
       .type-thinking, .type-narrating { color: #E6C384; }
       .type-responding { color: #98BB6C; }
@@ -167,8 +187,8 @@ defmodule ManfrodWeb.ActivityLive do
       .type-extraction_failed, .type-retrospection_failed { color: #E82424; }
 
       /* Error/warning line highlights */
-      .type-log-error { background: rgba(232, 36, 36, 0.1); }
-      .type-log-warning { background: rgba(255, 158, 59, 0.05); }
+      .event-row.type-log-error { background: rgba(232, 36, 36, 0.1); }
+      .event-row.type-log-warning { background: rgba(255, 158, 59, 0.05); }
     </style>
     """
   end
