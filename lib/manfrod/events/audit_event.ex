@@ -17,7 +17,6 @@ defmodule Manfrod.Events.AuditEvent do
   schema "audit_events" do
     field :type, :string
     field :source, :string
-    field :user_id, :integer
     field :meta, :map, default: %{}
     field :timestamp, :utc_datetime_usec
 
@@ -31,13 +30,12 @@ defmodule Manfrod.Events.AuditEvent do
     attrs = %{
       type: to_string(activity.type),
       source: if(activity.source, do: to_string(activity.source)),
-      user_id: activity.user_id,
       meta: stringify_meta(activity.meta),
       timestamp: activity.timestamp
     }
 
     %__MODULE__{}
-    |> cast(attrs, [:type, :source, :user_id, :meta, :timestamp])
+    |> cast(attrs, [:type, :source, :meta, :timestamp])
     |> validate_required([:type, :timestamp])
   end
 
@@ -49,7 +47,6 @@ defmodule Manfrod.Events.AuditEvent do
       id: event.id,
       type: String.to_existing_atom(event.type),
       source: if(event.source, do: String.to_existing_atom(event.source)),
-      user_id: event.user_id,
       reply_to: nil,
       meta: atomize_meta(event.meta),
       timestamp: event.timestamp

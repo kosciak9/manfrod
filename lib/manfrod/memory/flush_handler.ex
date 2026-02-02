@@ -4,6 +4,9 @@ defmodule Manfrod.Memory.FlushHandler do
 
   Subscribes to the event bus and triggers batch extraction
   when the agent broadcasts an :idle event.
+
+  The Extractor fetches pending messages directly from the database,
+  so we don't need to pass exchanges through the event.
   """
   use GenServer
 
@@ -24,23 +27,14 @@ defmodule Manfrod.Memory.FlushHandler do
   end
 
   @impl true
-  def handle_info({:activity, %Activity{type: :idle} = activity}, state) do
-    handle_idle(activity)
+  def handle_info({:activity, %Activity{type: :idle}}, state) do
+    Logger.info("FlushHandler: idle event received, triggering extraction")
+    Extractor.extract_async()
     {:noreply, state}
   end
 
   def handle_info({:activity, %Activity{}}, state) do
     # Ignore other event types
     {:noreply, state}
-  end
-
-  defp handle_idle(%Activity{user_id: user_id, meta: %{exchanges: exchanges}})
-       when is_list(exchanges) and exchanges != [] do
-    Logger.info("FlushHandler: extracting from #{length(exchanges)} exchanges")
-    Extractor.extract_batch_async(exchanges, user_id)
-  end
-
-  defp handle_idle(_activity) do
-    :ok
   end
 end

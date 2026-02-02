@@ -13,7 +13,6 @@ defmodule Manfrod.Events.Activity do
   ## Fields
 
   - `id` - unique event id (UUID)
-  - `user_id` - who triggered this
   - `source` - origin of the request (:telegram, :cron, :web, etc.)
   - `reply_to` - opaque reference for response routing (chat_id, pid, etc.)
   - `type` - activity type atom
@@ -25,7 +24,6 @@ defmodule Manfrod.Events.Activity do
 
   @type t :: %__MODULE__{
           id: String.t(),
-          user_id: term(),
           source: atom(),
           reply_to: term(),
           type: activity_type(),
@@ -34,23 +32,22 @@ defmodule Manfrod.Events.Activity do
         }
 
   @enforce_keys [:id, :type, :timestamp]
-  defstruct [:id, :user_id, :source, :reply_to, :type, :meta, :timestamp]
+  defstruct [:id, :source, :reply_to, :type, :meta, :timestamp]
 
   @doc """
   Create a new Activity event.
 
   ## Examples
 
-      Activity.new(:thinking, %{user_id: 123, source: :telegram, reply_to: 456})
-      Activity.new(:narrating, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{text: "Let me check..."}})
-      Activity.new(:working, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{tool: "run_shell"}})
-      Activity.new(:responding, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{content: "Hello!"}})
+      Activity.new(:thinking, %{source: :telegram, reply_to: 456})
+      Activity.new(:narrating, %{source: :telegram, reply_to: 456, meta: %{text: "Let me check..."}})
+      Activity.new(:working, %{source: :telegram, reply_to: 456, meta: %{tool: "run_shell"}})
+      Activity.new(:responding, %{source: :telegram, reply_to: 456, meta: %{content: "Hello!"}})
   """
   def new(type, attrs \\ %{}) when is_atom(type) do
     %__MODULE__{
       id: generate_id(),
       type: type,
-      user_id: Map.get(attrs, :user_id),
       source: Map.get(attrs, :source),
       reply_to: Map.get(attrs, :reply_to),
       meta: Map.get(attrs, :meta, %{}),

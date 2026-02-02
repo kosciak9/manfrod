@@ -1,6 +1,14 @@
 defmodule Manfrod.Memory.Extractor do
   @moduledoc """
   Extracts knowledge nodes and links from conversations via LLM.
+
+  Flow:
+  1. Fetch pending messages from DB
+  2. Generate conversation summary
+  3. Close conversation (create record, link messages)
+  4. Extract facts from conversation
+  5. Store nodes with conversation_id (in slipbox)
+  6. Create links between co-extracted facts
   """
 
   require Logger
@@ -8,6 +16,15 @@ defmodule Manfrod.Memory.Extractor do
 
   @base_url "https://opencode.ai/zen/v1"
   @model_id "kimi-k2.5-free"
+
+  @summary_prompt """
+  Summarize this conversation in 2-3 sentences. Focus on:
+  - What was discussed
+  - Key decisions or outcomes
+  - Any action items or follow-ups
+
+  Conversation:
+  """
 
   @extraction_prompt """
   Extract knowledge worth remembering from this conversation.
@@ -24,37 +41,88 @@ defmodule Manfrod.Memory.Extractor do
   """
 
   @doc """
-  Fire-and-forget batch extraction for multiple exchanges.
-  Called on conversation flush (5-min debounce).
+  Fire-and-forget extraction triggered on idle.
+  Fetches pending messages from DB, processes them, stores results.
   """
-  def extract_batch_async(exchanges, user_id) when is_list(exchanges) do
-    Task.start(fn -> extract_and_store(exchanges, user_id) end)
+  def extract_async do
+    Task.start(fn -> extract_and_store() end)
     :ok
   end
 
-  @doc "Synchronous batch extraction."
-  def extract_and_store(exchanges, user_id) when is_list(exchanges) do
-    conversation = format_exchanges(exchanges)
-    do_extract_and_store(conversation, user_id)
+  @doc """
+  Synchronous extraction and storage.
+  Returns {:ok, conversation, node_ids} or {:error, reason}.
+  """
+  def extract_and_store do
+    messages = Memory.get_pending_messages()
+
+    if messages == [] do
+      Logger.debug("Extractor: no pending messages to process")
+      {:ok, nil, []}
+    else
+      do_extract_and_store(messages)
+    end
   end
 
-  defp format_exchanges(exchanges) do
-    exchanges
-    |> Enum.with_index(1)
-    |> Enum.map_join("\n\n", fn {{user, assistant}, i} ->
-      "Exchange #{i}:\nUser: #{user}\nAssistant: #{assistant}"
+  defp do_extract_and_store(messages) do
+    conversation_text = format_messages(messages)
+
+    with {:ok, summary} <- generate_summary(conversation_text),
+         {:ok, conversation} <- Memory.close_conversation(%{summary: summary}),
+         {:ok, node_ids} <- extract_and_create_nodes(conversation_text, conversation.id) do
+      Logger.info(
+        "Extracted conversation #{conversation.id}: #{length(node_ids)} nodes, summary: #{String.slice(summary, 0, 50)}..."
+      )
+
+      {:ok, conversation, node_ids}
+    else
+      {:error, :no_pending_messages} ->
+        Logger.debug("Extractor: no pending messages (race condition)")
+        {:ok, nil, []}
+
+      {:error, reason} = err ->
+        Logger.error("Extraction failed: #{inspect(reason)}")
+        err
+    end
+  end
+
+  defp format_messages(messages) do
+    messages
+    |> Enum.map(fn msg ->
+      role = if msg.role == "user", do: "User", else: "Assistant"
+      "#{role}: #{msg.content}"
     end)
+    |> Enum.join("\n\n")
   end
 
-  defp do_extract_and_store(conversation, user_id) do
-    with {:ok, %{"nodes" => [_ | _] = texts, "links" => links}} <- call_llm(conversation),
+  defp generate_summary(conversation_text) do
+    prompt = @summary_prompt <> conversation_text
+
+    case call_llm(prompt) do
+      {:ok, response} ->
+        summary = response |> String.trim()
+        {:ok, summary}
+
+      error ->
+        error
+    end
+  end
+
+  defp extract_and_create_nodes(conversation_text, conversation_id) do
+    with {:ok, %{"nodes" => [_ | _] = texts, "links" => links}} <-
+           extract_facts(conversation_text),
          {:ok, embeddings} <- Voyage.embed(texts) do
       node_ids =
         texts
         |> Enum.zip(embeddings)
         |> Enum.map(fn {content, embedding} ->
           {:ok, node} =
-            Memory.create_node(%{content: content, embedding: embedding, user_id: user_id})
+            Memory.create_node(%{
+              content: content,
+              embedding: embedding,
+              conversation_id: conversation_id
+              # processed_at is nil by default (slipbox)
+            })
 
           node.id
         end)
@@ -63,26 +131,34 @@ defmodule Manfrod.Memory.Extractor do
         Memory.create_link(Enum.at(node_ids, a), Enum.at(node_ids, b))
       end
 
-      Logger.info("Extracted #{length(node_ids)} nodes, #{length(links)} links")
+      Logger.info("Created #{length(node_ids)} nodes, #{length(links)} links")
       {:ok, node_ids}
     else
       {:ok, %{"nodes" => []}} ->
+        Logger.info("No facts worth extracting from conversation")
         {:ok, []}
 
-      {:error, reason} = err ->
-        Logger.error("Extraction failed: #{inspect(reason)}")
+      {:error, _} = err ->
         err
     end
   end
 
-  defp call_llm(conversation) do
+  defp extract_facts(conversation_text) do
+    prompt = @extraction_prompt <> conversation_text
+
+    case call_llm(prompt) do
+      {:ok, response} -> parse_json(response)
+      error -> error
+    end
+  end
+
+  defp call_llm(prompt) do
     api_key = Application.get_env(:manfrod, :zen_api_key)
-    prompt = @extraction_prompt <> conversation
     context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
     model = %{id: @model_id, provider: :openai}
 
     case ReqLLM.generate_text(model, context, base_url: @base_url, api_key: api_key) do
-      {:ok, response} -> parse_json(ReqLLM.Response.text(response))
+      {:ok, response} -> {:ok, ReqLLM.Response.text(response)}
       error -> error
     end
   end

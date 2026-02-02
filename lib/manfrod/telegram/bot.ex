@@ -51,7 +51,6 @@ defmodule Manfrod.Telegram.Bot do
       # Send to Agent inbox - ActivityHandler will handle typing and responses
       Manfrod.Agent.send_message(%{
         content: text,
-        user_id: msg.from.id,
         source: :telegram,
         reply_to: msg.chat.id
       })

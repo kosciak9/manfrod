@@ -17,6 +17,12 @@ defmodule Manfrod.Agent do
 
   Subscribers (Telegram.ActivityHandler, Memory.FlushHandler, AuditLive) handle
   these events appropriately for their context.
+
+  ## Message persistence
+
+  Messages are persisted to the database immediately on receive/response.
+  On idle, the FlushHandler triggers extraction which fetches pending
+  messages from DB, generates a summary, and extracts facts.
   """
   use GenServer
 
@@ -143,7 +149,6 @@ defmodule Manfrod.Agent do
   ## Required fields
 
   - `content` - the message text
-  - `user_id` - identifier for the user
   - `source` - origin atom (:telegram, :cron, :web, etc.)
   - `reply_to` - opaque reference for response routing (chat_id, pid, etc.)
   """
@@ -214,8 +219,8 @@ defmodule Manfrod.Agent do
 
   # Server Callbacks
 
-  # 5 minutes debounce before flushing conversation
-  @flush_delay :timer.minutes(5)
+  # 60 minutes debounce before flushing conversation
+  @flush_delay :timer.minutes(60)
 
   @impl true
   def init(_opts) do
@@ -224,48 +229,60 @@ defmodule Manfrod.Agent do
     {:ok,
      %{
        messages: [system_message],
-       flush_buffer: [],
        flush_timer: nil
      }}
   end
 
   @impl true
   def handle_cast({:message, message}, state) do
-    %{content: content, user_id: user_id, source: source, reply_to: reply_to} = message
+    %{content: content, source: source, reply_to: reply_to} = message
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     Logger.info("Agent received message from #{source}: #{String.slice(content, 0, 50)}...")
 
+    # Persist user message to DB
+    {:ok, _user_msg} =
+      Memory.create_message(%{
+        role: "user",
+        content: content,
+        received_at: now
+      })
+
     # Build event context for broadcasts
-    event_ctx = %{user_id: user_id, source: source, reply_to: reply_to}
+    event_ctx = %{source: source, reply_to: reply_to}
 
     # Broadcast thinking activity
     Events.broadcast(:thinking, event_ctx)
 
     # Process with memory context and tools
-    {response_text, new_state} = process_message(content, user_id, state, event_ctx)
+    {response_text, new_state} = process_message(content, state, event_ctx)
+
+    # Persist assistant response to DB
+    {:ok, _assistant_msg} =
+      Memory.create_message(%{
+        role: "assistant",
+        content: response_text,
+        received_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
 
     # Broadcast response - handlers deliver to appropriate channel
     Events.broadcast(:responding, Map.put(event_ctx, :meta, %{content: response_text}))
     Logger.info("Agent broadcast response for #{source}")
 
-    # Buffer exchange for batch extraction
-    new_buffer = new_state.flush_buffer ++ [{content, response_text}]
-
     # Debounce: cancel old timer, start new one
     if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
     timer_ref = Process.send_after(self(), {:flush, event_ctx}, @flush_delay)
 
-    {:noreply, %{new_state | flush_buffer: new_buffer, flush_timer: timer_ref}}
+    {:noreply, %{new_state | flush_timer: timer_ref}}
   end
 
   @impl true
-  def handle_info({:flush, event_ctx}, state) do
-    Logger.info("Flushing conversation buffer (#{length(state.flush_buffer)} exchanges)")
+  def handle_info({:flush, event_ctx}, _state) do
+    Logger.info("Conversation idle timeout - triggering extraction")
 
-    if state.flush_buffer != [] do
-      # Broadcast idle event - FlushHandler will trigger extraction
-      Events.broadcast(:idle, Map.put(event_ctx, :meta, %{exchanges: state.flush_buffer}))
-    end
+    # Broadcast idle event - FlushHandler will trigger extraction
+    # Extractor fetches pending messages from DB
+    Events.broadcast(:idle, event_ctx)
 
     # Reset to fresh conversation state
     system_message = ReqLLM.Context.system(@system_prompt)
@@ -273,16 +290,15 @@ defmodule Manfrod.Agent do
     {:noreply,
      %{
        messages: [system_message],
-       flush_buffer: [],
        flush_timer: nil
      }}
   end
 
   # Private
 
-  defp process_message(text, user_id, state, event_ctx) do
+  defp process_message(text, state, event_ctx) do
     # Retrieve relevant memory context
-    memory_context = get_memory_context(text, user_id)
+    memory_context = get_memory_context(text)
 
     # Build user message with memory context prepended
     user_content =
@@ -393,8 +409,8 @@ defmodule Manfrod.Agent do
     end
   end
 
-  defp get_memory_context(query, user_id) do
-    case Memory.search(query, user_id, limit: 5) do
+  defp get_memory_context(query) do
+    case Memory.search(query, limit: 5) do
       {:ok, nodes} when nodes != [] ->
         Memory.build_context(nodes)
 
