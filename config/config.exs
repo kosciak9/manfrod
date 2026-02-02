@@ -11,7 +11,8 @@ config :manfrod, ManfrodWeb.Endpoint,
   adapter: Bandit.PhoenixAdapter,
   pubsub_server: Manfrod.PubSub,
   live_view: [signing_salt: "5e3ieG0i"],
-  code_reloader: true
+  code_reloader: true,
+  render_errors: [formats: [html: ManfrodWeb.ErrorHTML], layout: false]
 
 config :logger,
   handle_otp_reports: true,

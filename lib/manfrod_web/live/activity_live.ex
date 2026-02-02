@@ -404,11 +404,15 @@ defmodule ManfrodWeb.ActivityLive do
   defp has_expandable_content?(%Activity{type: :action_completed}), do: true
 
   defp has_expandable_content?(%Activity{type: :log, meta: %{stacktrace: st}})
-       when not is_nil(st),
+       when st != "" and not is_nil(st),
        do: true
 
   defp has_expandable_content?(%Activity{type: :log, meta: %{message: m}})
-       when byte_size(m) > 100,
+       when is_binary(m) and byte_size(m) > 100,
+       do: true
+
+  defp has_expandable_content?(%Activity{type: :log, meta: %{message: m}})
+       when is_list(m) and length(m) > 100,
        do: true
 
   defp has_expandable_content?(%Activity{type: :message_received}), do: true
