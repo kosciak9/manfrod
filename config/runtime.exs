@@ -8,9 +8,18 @@ source!([".env", System.get_env()])
 database_url =
   env!("DATABASE_URL", :string, "ecto://manfrod:qLmVMeXiYyy65ADb@localhost:35232/manfrod")
 
-config :manfrod, Manfrod.Repo,
-  url: database_url,
-  pool_size: env!("POOL_SIZE", :integer, 10)
+if config_env() == :test do
+  config :manfrod, Manfrod.Repo,
+    url: database_url,
+    pool: Ecto.Adapters.SQL.Sandbox,
+    pool_size: System.schedulers_online() * 2
+
+  config :logger, level: :none
+else
+  config :manfrod, Manfrod.Repo,
+    url: database_url,
+    pool_size: env!("POOL_SIZE", :integer, 10)
+end
 
 # Endpoint
 secret_key_base =

@@ -6,12 +6,16 @@ defmodule Manfrod.MixProject do
       app: :manfrod,
       version: "0.1.0",
       elixir: "~> 1.15",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: true,
       aliases: aliases(),
       deps: deps(),
       listeners: [Phoenix.CodeReloader]
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   def application do
     [
@@ -37,7 +41,8 @@ defmodule Manfrod.MixProject do
       {:pgvector, "~> 0.3"},
       {:paradex, "~> 0.4"},
       {:earmark, "~> 1.4"},
-      {:oban, "~> 2.20"}
+      {:oban, "~> 2.20"},
+      {:mox, "~> 1.0", only: :test}
     ]
   end
 
