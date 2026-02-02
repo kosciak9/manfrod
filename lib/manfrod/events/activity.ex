@@ -5,6 +5,7 @@ defmodule Manfrod.Events.Activity do
   ## Types
 
   - `:thinking` - message received, starting LLM call
+  - `:narrating` - agent explaining what it's doing (text between tool calls)
   - `:working` - executing tool
   - `:responding` - final response ready
   - `:idle` - conversation timed out
@@ -20,7 +21,7 @@ defmodule Manfrod.Events.Activity do
   - `timestamp` - when the event occurred
   """
 
-  @type activity_type :: :thinking | :working | :responding | :idle
+  @type activity_type :: :thinking | :narrating | :working | :responding | :idle
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -41,6 +42,7 @@ defmodule Manfrod.Events.Activity do
   ## Examples
 
       Activity.new(:thinking, %{user_id: 123, source: :telegram, reply_to: 456})
+      Activity.new(:narrating, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{text: "Let me check..."}})
       Activity.new(:working, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{tool: "run_shell"}})
       Activity.new(:responding, %{user_id: 123, source: :telegram, reply_to: 456, meta: %{content: "Hello!"}})
   """

@@ -186,11 +186,13 @@ defmodule ManfrodWeb.AuditLive do
   end
 
   defp format_type(:thinking), do: "THINKING"
+  defp format_type(:narrating), do: "NARRATE"
   defp format_type(:working), do: "WORKING"
   defp format_type(:responding), do: "RESPOND"
   defp format_type(:idle), do: "IDLE"
   defp format_type(other), do: String.upcase(to_string(other))
 
+  defp format_detail(%Activity{type: :narrating, meta: %{text: text}}), do: truncate(text, 120)
   defp format_detail(%Activity{type: :working, meta: %{tool: tool}}), do: tool
 
   defp format_detail(%Activity{type: :responding, meta: %{content: content}}),

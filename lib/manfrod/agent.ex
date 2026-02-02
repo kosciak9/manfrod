@@ -10,6 +10,7 @@ defmodule Manfrod.Agent do
 
   The Agent broadcasts Activity events instead of calling handlers directly:
   - `:thinking` - message received, starting LLM call
+  - `:narrating` - agent explaining what it's doing (text between tool calls)
   - `:working` - executing tool
   - `:responding` - final response ready
   - `:idle` - conversation timed out
@@ -323,8 +324,15 @@ defmodule Manfrod.Agent do
               tool_calls = ReqLLM.Response.tool_calls(response)
               Logger.info("Agent executing #{length(tool_calls)} tool(s)")
 
-              # Add assistant message with tool calls
-              assistant_msg = ReqLLM.Context.assistant("", tool_calls: tool_calls)
+              # Extract any narrative text the LLM sent alongside tool calls
+              narrative_text = ReqLLM.Response.text(response) || ""
+
+              if narrative_text != "" do
+                Events.broadcast(:narrating, Map.put(event_ctx, :meta, %{text: narrative_text}))
+              end
+
+              # Add assistant message with tool calls (include narrative text)
+              assistant_msg = ReqLLM.Context.assistant(narrative_text, tool_calls: tool_calls)
               messages_with_assistant = messages ++ [assistant_msg]
 
               # Execute each tool and add results

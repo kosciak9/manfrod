@@ -39,6 +39,17 @@ defmodule Manfrod.Telegram.ActivityHandler do
     send_typing(chat_id)
   end
 
+  defp handle_activity(%Activity{type: :narrating, reply_to: chat_id, meta: %{text: text}}) do
+    # Send agent's narrative/explanation text (e.g., "Let me check the source code...")
+    Sender.send(chat_id, "💭 #{text}")
+  end
+
+  defp handle_activity(%Activity{type: :working, reply_to: chat_id, meta: %{tool: tool_name}}) do
+    send_typing(chat_id)
+    # Send tool call notification to user
+    Sender.send(chat_id, "🔧 #{tool_name}")
+  end
+
   defp handle_activity(%Activity{type: :working, reply_to: chat_id}) do
     send_typing(chat_id)
   end
