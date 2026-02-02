@@ -107,43 +107,42 @@ defmodule ManfrodWeb.ActivityLive do
           </div>
         </header>
 
-        <%!-- Column Headers --%>
-        <div class="sticky top-[53px] z-10 bg-zinc-900 border-b border-zinc-700 px-4">
-          <div class="grid grid-cols-[max-content_max-content_max-content_1fr] gap-4 p-1 text-xs text-zinc-500 uppercase tracking-wider">
+        <%!-- Event List with Grid --%>
+        <div
+          class="flex-1 overflow-y-auto grid grid-cols-[max-content_max-content_max-content_1fr] gap-x-4"
+          id="activity-log"
+        >
+          <%!-- Column Headers (sticky, spans all columns) --%>
+          <div class="sticky top-0 z-10 col-span-full grid grid-cols-subgrid bg-zinc-900 border-b border-zinc-700 py-2 px-4 text-xs text-zinc-500 uppercase tracking-wider">
             <span>Time</span>
             <span>Type</span>
             <span>Source</span>
             <span>Details</span>
           </div>
-        </div>
 
-        <%!-- Event List --%>
-        <div class="flex-1 overflow-y-auto" id="activity-log">
+          <%!-- Event Rows --%>
           <%= for event <- @events do %>
             <div
               class={[
-                "px-4 cursor-pointer transition-colors border-b border-zinc-800",
-                row_bg_class(event),
-                if(MapSet.member?(@expanded, event.id), do: "expanded")
+                "col-span-full grid grid-cols-subgrid cursor-pointer transition-colors border-b border-zinc-800 py-1 px-4",
+                row_bg_class(event)
               ]}
               id={"event-#{event.id}"}
               phx-click="toggle_expand"
               phx-value-id={event.id}
             >
-              <div class="grid grid-cols-[max-content_max-content_max-content_1fr] gap-4 p-1">
-                <span class="text-zinc-500 tabular-nums"><%= format_time(event.timestamp) %></span>
-                <span class={["font-semibold", type_color_class(event)]}><%= format_type(event) %></span>
-                <span class="text-cyan-400"><%= event.source || "-" %></span>
-                <span class="text-zinc-400 truncate">
-                  <%= format_detail(event) %>
-                </span>
-              </div>
-              <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
-                <div class="py-3 ml-[18rem] border-t border-zinc-800 bg-zinc-950/50">
-                  <pre class="whitespace-pre-wrap break-all text-xs text-zinc-400 max-h-72 overflow-y-auto leading-relaxed"><%= format_expanded(event) %></pre>
-                </div>
-              <% end %>
+              <span class="text-zinc-500 tabular-nums"><%= format_time(event.timestamp) %></span>
+              <span class={["font-semibold", type_color_class(event)]}><%= format_type(event) %></span>
+              <span class="text-cyan-400"><%= event.source || "-" %></span>
+              <span class="text-zinc-400 truncate">
+                <%= format_detail(event) %>
+              </span>
             </div>
+            <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
+              <div class="col-span-full py-3 px-4 border-b border-zinc-800 bg-zinc-950/50">
+                <pre class="whitespace-pre-wrap break-all text-xs text-zinc-400 max-h-72 overflow-y-auto leading-relaxed pl-4"><%= format_expanded(event) %></pre>
+              </div>
+            <% end %>
           <% end %>
         </div>
       </div>
