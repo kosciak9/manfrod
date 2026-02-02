@@ -176,6 +176,34 @@ defmodule Manfrod.Memory do
     :ok
   end
 
+  @doc """
+  Delete a node and all its links (cascade).
+  Returns {:ok, node} or {:error, :not_found}.
+  """
+  def delete_node(node_id) do
+    case get_node(node_id) do
+      nil ->
+        {:error, :not_found}
+
+      node ->
+        # Delete all links involving this node
+        from(l in Link,
+          where: l.node_a_id == ^node_id or l.node_b_id == ^node_id
+        )
+        |> Repo.delete_all()
+
+        # Delete the node
+        Repo.delete(node)
+
+        Events.broadcast(:memory_node_deleted, %{
+          source: :memory,
+          meta: %{node_id: node_id}
+        })
+
+        {:ok, node}
+    end
+  end
+
   # --- Links ---
 
   def create_link(node_a_id, node_b_id) do
@@ -196,6 +224,57 @@ defmodule Manfrod.Memory do
       error ->
         error
     end
+  end
+
+  @doc """
+  Delete a link between two nodes.
+  Returns {:ok, link} or {:error, :not_found}.
+  """
+  def delete_link(node_a_id, node_b_id) do
+    # Normalize order (same logic as Link changeset)
+    {a, b} = if node_a_id < node_b_id, do: {node_a_id, node_b_id}, else: {node_b_id, node_a_id}
+
+    case Repo.get_by(Link, node_a_id: a, node_b_id: b) do
+      nil ->
+        {:error, :not_found}
+
+      link ->
+        Repo.delete(link)
+
+        Events.broadcast(:memory_link_deleted, %{
+          source: :memory,
+          meta: %{node_a_id: a, node_b_id: b}
+        })
+
+        {:ok, link}
+    end
+  end
+
+  @doc """
+  Get all linked nodes for a given node.
+  Returns a list of nodes that are directly connected.
+  """
+  def get_node_links(node_id) do
+    from(n in Node,
+      join: l in Link,
+      on:
+        (l.node_a_id == ^node_id and l.node_b_id == n.id) or
+          (l.node_b_id == ^node_id and l.node_a_id == n.id),
+      distinct: n.id
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Get a random sample of processed nodes from the graph.
+  Useful for graph review and maintenance.
+  """
+  def get_random_nodes(limit \\ 10) do
+    Node
+    |> where([n], not is_nil(n.processed_at))
+    |> order_by(fragment("RANDOM()"))
+    |> limit(^limit)
+    |> Repo.all()
   end
 
   # --- Hybrid Search ---

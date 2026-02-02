@@ -12,6 +12,9 @@ defmodule Manfrod.Memory.Retrospector do
   - `get_node` - fetch a node by ID
   - `create_node` - create a new node (returns ID)
   - `create_link` - link two nodes by ID
+  - `delete_node` - delete a node and its links (for deduplication)
+  - `delete_link` - delete a link between nodes
+  - `list_links` - list all nodes linked to a given node (for graph exploration)
   - `mark_processed` - mark a node as integrated into the graph
   """
 
@@ -32,10 +35,31 @@ defmodule Manfrod.Memory.Retrospector do
 
   You have access to:
   - Unprocessed notes from recent conversations (the slipbox)
-  - The existing knowledge graph (via search)
-  - Tools to create nodes, create links, and mark notes as processed
+  - The existing knowledge graph (via search and list_links)
+  - Tools to create nodes, create links, delete nodes, delete links, and mark notes as processed
 
-  Work through the slipbox thoughtfully. When finished, say "Done."
+  ## Deduplication
+
+  There is a high chance you'll find duplicates in slipbox, both duplicates of
+  other slipbox items and duplicates of what's already in the graph. That's
+  because we extract all interesting facts from conversations without regard to
+  current contents. Your job is to keep it deduplicated.
+
+  ## Graph Gardening
+
+  Don't just process the slipbox - tend to the garden. Each session, go deeper:
+  - Follow links from nodes you touch to see what's connected
+  - Look for clusters that could use structure notes
+  - Find orphans that deserve connections
+  - Notice patterns emerging and create new linking opportunities
+  - Consolidate near-duplicates you discover while exploring
+  - Let structure emerge from your observations
+
+  The graph is alive. You're not just adding to it - you're shaping it, pruning
+  it, helping it grow in interesting directions. Log what you notice. React to
+  what you find. Iterate.
+
+  When finished, say "Done."
 
   Here is a guide on zettelkasten best practices:
 
@@ -93,6 +117,33 @@ defmodule Manfrod.Memory.Retrospector do
           id: [type: :string, required: true, doc: "Node UUID to mark as processed"]
         ],
         callback: &tool_mark_processed/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "delete_node",
+        description:
+          "Delete a node from the knowledge graph. Use this to remove duplicates. All links to/from this node are automatically deleted.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "Node UUID to delete"]
+        ],
+        callback: &tool_delete_node/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "delete_link",
+        description: "Delete a link between two nodes.",
+        parameter_schema: [
+          node_a_id: [type: :string, required: true, doc: "First node UUID"],
+          node_b_id: [type: :string, required: true, doc: "Second node UUID"]
+        ],
+        callback: &tool_delete_link/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "list_links",
+        description:
+          "List all nodes directly linked to a given node. Use this to explore the graph structure and follow connections.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "Node UUID to get links for"]
+        ],
+        callback: &tool_list_links/1
       )
     ]
   end
@@ -167,49 +218,95 @@ defmodule Manfrod.Memory.Retrospector do
     {:ok, "Marked #{id} as processed"}
   end
 
+  def tool_delete_node(%{id: id}) do
+    case Memory.delete_node(id) do
+      {:ok, _node} ->
+        {:ok, "Deleted node: #{id}"}
+
+      {:error, :not_found} ->
+        {:ok, "Node not found: #{id}"}
+    end
+  end
+
+  def tool_delete_link(%{node_a_id: a, node_b_id: b}) do
+    case Memory.delete_link(a, b) do
+      {:ok, _link} ->
+        {:ok, "Deleted link: #{a} <-> #{b}"}
+
+      {:error, :not_found} ->
+        {:ok, "Link not found: #{a} <-> #{b}"}
+    end
+  end
+
+  def tool_list_links(%{id: id}) do
+    linked_nodes = Memory.get_node_links(id)
+
+    if linked_nodes == [] do
+      {:ok, "Node #{id} has no links (orphan)."}
+    else
+      result =
+        linked_nodes
+        |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
+        |> Enum.join("\n")
+
+      {:ok, "Node #{id} is linked to #{length(linked_nodes)} nodes:\n#{result}"}
+    end
+  end
+
   # Public API
 
   @doc """
-  Process the slipbox - run the retrospection agent.
+  Run the retrospection agent.
+
+  Processes the slipbox (unprocessed nodes) and also reviews a random sample
+  of the existing graph for maintenance and gardening.
+
   Returns :ok or {:error, reason}.
   """
   def process_slipbox(opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 20)
-    slipbox = Memory.get_slipbox_nodes(limit: batch_size)
+    review_size = Keyword.get(opts, :review_size, 5)
 
-    if slipbox == [] do
-      Logger.debug("Retrospector: slipbox is empty")
+    slipbox = Memory.get_slipbox_nodes(limit: batch_size)
+    review_sample = Memory.get_random_nodes(review_size)
+
+    if slipbox == [] and review_sample == [] do
+      Logger.debug("Retrospector: nothing to process (empty graph)")
       :ok
     else
-      Logger.info("Retrospector: processing #{length(slipbox)} nodes from slipbox")
-      run_agent(slipbox)
+      Logger.info(
+        "Retrospector: processing #{length(slipbox)} slipbox nodes, reviewing #{length(review_sample)} graph nodes"
+      )
+
+      run_agent(slipbox, review_sample)
     end
   end
 
   # Private
 
-  defp run_agent(slipbox) do
-    slipbox_text = format_slipbox(slipbox)
+  defp run_agent(slipbox, review_sample) do
+    slipbox_text = format_nodes(slipbox)
+    review_text = format_nodes(review_sample)
 
     Events.broadcast(:retrospection_started, %{
       source: :retrospector,
-      meta: %{slipbox_count: length(slipbox)}
+      meta: %{slipbox_count: length(slipbox), review_count: length(review_sample)}
     })
 
-    user_message = """
-    Here are the unprocessed notes in your slipbox:
-
-    #{slipbox_text}
-
-    Search the existing graph to find connections, create links, and create any new insight nodes as needed. Mark each note as processed when you're done with it.
-    """
+    user_message = build_user_message(slipbox_text, review_text)
 
     messages = [
       ReqLLM.Context.system(@system_prompt),
       ReqLLM.Context.user(user_message)
     ]
 
-    case call_with_tools(messages, 0, %{nodes_processed: 0, links_created: 0, insights_created: 0}) do
+    case call_with_tools(messages, 0, %{
+           nodes_processed: 0,
+           links_created: 0,
+           insights_created: 0,
+           nodes_deleted: 0,
+           links_deleted: 0
+         }) do
       {:ok, _final_text, stats} ->
         Logger.info("Retrospector: agent completed successfully")
 
@@ -232,10 +329,43 @@ defmodule Manfrod.Memory.Retrospector do
     end
   end
 
-  defp format_slipbox(nodes) do
+  defp format_nodes(nodes) do
     nodes
     |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
     |> Enum.join("\n")
+  end
+
+  defp build_user_message(slipbox_text, review_text) do
+    slipbox_section =
+      if slipbox_text == "" do
+        "Your slipbox is empty - no new notes to process."
+      else
+        """
+        ## Slipbox (unprocessed notes)
+
+        #{slipbox_text}
+
+        Process these: search for connections, deduplicate, link, and mark as processed.
+        """
+      end
+
+    review_section =
+      if review_text == "" do
+        ""
+      else
+        """
+
+        ## Graph Sample (for review)
+
+        Here are some random nodes from your existing graph. Use list_links to explore
+        their connections. Look for opportunities to improve structure, find missing
+        links, or consolidate related ideas:
+
+        #{review_text}
+        """
+      end
+
+    slipbox_section <> review_section
   end
 
   defp call_with_tools(messages, iteration, stats) do
@@ -288,6 +418,8 @@ defmodule Manfrod.Memory.Retrospector do
   defp update_stats(stats, "mark_processed"), do: Map.update!(stats, :nodes_processed, &(&1 + 1))
   defp update_stats(stats, "create_link"), do: Map.update!(stats, :links_created, &(&1 + 1))
   defp update_stats(stats, "create_node"), do: Map.update!(stats, :insights_created, &(&1 + 1))
+  defp update_stats(stats, "delete_node"), do: Map.update!(stats, :nodes_deleted, &(&1 + 1))
+  defp update_stats(stats, "delete_link"), do: Map.update!(stats, :links_deleted, &(&1 + 1))
   defp update_stats(stats, _tool), do: stats
 
   defp execute_tool(tool_call) do
