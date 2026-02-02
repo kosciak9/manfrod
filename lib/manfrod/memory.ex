@@ -89,6 +89,26 @@ defmodule Manfrod.Memory do
     |> Repo.one()
   end
 
+  # --- Soul ---
+
+  @doc """
+  Check if the zettelkasten has a soul (any nodes exist).
+  """
+  def has_soul? do
+    Repo.exists?(Node)
+  end
+
+  @doc """
+  Get the soul - the first node by insertion time.
+  Returns nil if no nodes exist.
+  """
+  def get_soul do
+    Node
+    |> order_by([n], asc: n.inserted_at)
+    |> limit(1)
+    |> Repo.one()
+  end
+
   # --- Nodes ---
 
   def create_node(attrs) do

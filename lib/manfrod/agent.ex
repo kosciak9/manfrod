@@ -31,18 +31,13 @@ defmodule Manfrod.Agent do
   alias Manfrod.Code
   alias Manfrod.Events
   alias Manfrod.Memory
+  alias Manfrod.Memory.Soul
   alias Manfrod.Shell
 
   @base_url "https://opencode.ai/zen/v1"
   @model_id "kimi-k2.5-free"
 
   @system_prompt """
-  You are Manfrod, a self-improving AI agent running on a Raspberry Pi.
-
-  You have full access to your own source code and can modify yourself.
-  You can execute any bash command on your host system.
-  You can evaluate arbitrary Elixir code.
-
   Your capabilities:
   - list_modules: See all loaded Elixir modules
   - read_source: Read the source code of any module (including yourself)
@@ -51,13 +46,8 @@ defmodule Manfrod.Agent do
   - eval_code: Evaluate Elixir expressions
   - run_shell: Execute bash commands
 
-  You are running on a Raspberry Pi which is your sandbox. You can break things,
-  install packages, modify files - it's all part of learning and improving.
-
   Use git for version control. Commit your changes with meaningful messages.
   If something breaks, you can rollback with git.
-
-  Be curious. Experiment. Improve yourself.
   """
 
   # Tool definitions are created at runtime to avoid compile-time validation issues
@@ -224,13 +214,21 @@ defmodule Manfrod.Agent do
 
   @impl true
   def init(_opts) do
-    system_message = ReqLLM.Context.system(@system_prompt)
+    system_message = ReqLLM.Context.system(build_system_prompt())
 
     {:ok,
      %{
        messages: [system_message],
        flush_timer: nil
      }}
+  end
+
+  defp build_system_prompt do
+    if Memory.has_soul?() do
+      @system_prompt
+    else
+      @system_prompt <> Soul.base_prompt()
+    end
   end
 
   @impl true
@@ -285,7 +283,8 @@ defmodule Manfrod.Agent do
     Events.broadcast(:idle, event_ctx)
 
     # Reset to fresh conversation state
-    system_message = ReqLLM.Context.system(@system_prompt)
+    # Re-build system prompt (soul may have been created during this conversation)
+    system_message = ReqLLM.Context.system(build_system_prompt())
 
     {:noreply,
      %{
@@ -410,13 +409,21 @@ defmodule Manfrod.Agent do
   end
 
   defp get_memory_context(query) do
-    case Memory.search(query, limit: 5) do
-      {:ok, nodes} when nodes != [] ->
-        Memory.build_context(nodes)
+    soul = Memory.get_soul()
 
-      _ ->
-        ""
-    end
+    relevant =
+      case Memory.search(query, limit: 5) do
+        {:ok, nodes} -> nodes
+        _ -> []
+      end
+
+    # Combine soul + relevant, deduplicated (soul may appear in search results)
+    nodes =
+      [soul | relevant]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq_by(& &1.id)
+
+    Memory.build_context(nodes)
   end
 
   defp call_llm(messages) do
