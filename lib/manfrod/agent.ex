@@ -49,6 +49,11 @@ defmodule Manfrod.Agent do
 
   Use git for version control. Commit your changes with meaningful messages.
   If something breaks, you can rollback with git.
+
+  Self-update: Run `./scripts/update.sh` to pull latest code from origin/main,
+  recompile, run migrations, and restart. The script handles rollback if
+  compilation fails. After restart, you'll lose this conversation context
+  but your memory persists in the database.
   """
 
   # Tool definitions are created at runtime to avoid compile-time validation issues
@@ -234,7 +239,7 @@ defmodule Manfrod.Agent do
   end
 
   defp build_system_prompt do
-    if Memory.has_soul?() do
+    if Manfrod.Deployment.db_healthy?() and Memory.has_soul?() do
       @system_prompt
     else
       @system_prompt <> Soul.base_prompt()
@@ -244,6 +249,46 @@ defmodule Manfrod.Agent do
   @impl true
   def handle_cast({:message, message}, state) do
     %{content: content, source: source, reply_to: reply_to} = message
+    event_ctx = %{source: source, reply_to: reply_to}
+
+    # Check DB health before processing - respond with error if down
+    unless Manfrod.Deployment.db_healthy?() do
+      Logger.error("Agent: database unavailable, cannot process message")
+
+      Events.broadcast(
+        :responding,
+        Map.put(event_ctx, :meta, %{
+          content: "Issues with database. Need manual intervention."
+        })
+      )
+
+      {:noreply, state}
+    else
+      do_handle_message(content, event_ctx, state)
+    end
+  end
+
+  def handle_cast({:trigger_idle, event_ctx}, state) do
+    Logger.info("Manual idle triggered via /idle command")
+
+    # Cancel any pending flush timer
+    if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
+
+    # Broadcast idle event - FlushHandler will trigger extraction
+    Events.broadcast(:idle, event_ctx)
+
+    # Reset to fresh conversation state
+    system_message = ReqLLM.Context.system(build_system_prompt())
+
+    {:noreply,
+     %{
+       messages: [system_message],
+       flush_timer: nil
+     }}
+  end
+
+  defp do_handle_message(content, event_ctx, state) do
+    %{source: source, reply_to: _reply_to} = event_ctx
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     Logger.info("Agent received message from #{source}: #{String.slice(content, 0, 50)}...")
@@ -255,9 +300,6 @@ defmodule Manfrod.Agent do
         content: content,
         received_at: now
       })
-
-    # Build event context for broadcasts
-    event_ctx = %{source: source, reply_to: reply_to}
 
     # Broadcast thinking activity
     Events.broadcast(:thinking, event_ctx)
@@ -282,26 +324,6 @@ defmodule Manfrod.Agent do
     timer_ref = Process.send_after(self(), {:flush, event_ctx}, @flush_delay)
 
     {:noreply, %{new_state | flush_timer: timer_ref}}
-  end
-
-  @impl true
-  def handle_cast({:trigger_idle, event_ctx}, state) do
-    Logger.info("Manual idle triggered via /idle command")
-
-    # Cancel any pending flush timer
-    if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
-
-    # Broadcast idle event - FlushHandler will trigger extraction
-    Events.broadcast(:idle, event_ctx)
-
-    # Reset to fresh conversation state
-    system_message = ReqLLM.Context.system(build_system_prompt())
-
-    {:noreply,
-     %{
-       messages: [system_message],
-       flush_timer: nil
-     }}
   end
 
   @impl true
