@@ -42,6 +42,7 @@ defmodule Manfrod.MixProject do
       {:paradex, "~> 0.4"},
       {:earmark, "~> 1.4"},
       {:oban, "~> 2.20"},
+      {:tzdata, "~> 1.1"},
       {:mox, "~> 1.0", only: :test}
     ]
   end

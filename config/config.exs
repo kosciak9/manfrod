@@ -1,5 +1,8 @@
 import Config
 
+# Use tzdata for timezone support (needed for trigger scheduling)
+config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
+
 config :manfrod,
   ecto_repos: [Manfrod.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true]
@@ -33,8 +36,10 @@ config :manfrod, Oban,
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,
      crontab: [
-       # Every 2 hours
-       {"0 */2 * * *", Manfrod.Workers.RetrospectionWorker}
+       # Every 2 hours - retrospection
+       {"0 */2 * * *", Manfrod.Workers.RetrospectionWorker},
+       # Every hour - schedule triggers for next 48h
+       {"0 * * * *", Manfrod.Workers.SchedulerWorker}
      ]}
   ]
 
