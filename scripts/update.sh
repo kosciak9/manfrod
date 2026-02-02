@@ -89,14 +89,39 @@ mix run -e "Manfrod.Deployment.mark_updating(\"$NEW_SHA\")"
 echo ""
 
 # 7. Restart service
-# Use systemd-run to schedule restart outside current process tree
+# Use a background script that:
+#   1. Waits a moment for this script to return output to the agent
+#   2. Stops the service and waits for port to be free
+#   3. Starts the service
 echo ">>> Scheduling service restart..."
 echo "The agent will die and come back with restored context."
-sudo systemd-run --on-active=2s --timer-property=AccuracySec=100ms systemctl restart manfrod
+
+# Get the port from environment or use default
+PORT="${PORT:-4000}"
+
+# Create and run a detached restart script
+sudo bash -c "
+  # Wait a moment for the update script to finish and return
+  sleep 1
+  
+  # Stop the service
+  systemctl stop manfrod
+  
+  # Wait for port to be released (max 30 seconds)
+  for i in {1..30}; do
+    if ! ss -tlnp | grep -q ':$PORT '; then
+      break
+    fi
+    sleep 1
+  done
+  
+  # Start the service
+  systemctl start manfrod
+" &>/dev/null &
 
 echo ""
 echo "=== Update complete ==="
 echo "Finished at: $(date)"
 echo ""
 echo "New commit: $NEW_SHA"
-echo "Restart scheduled - agent will reconnect in ~2 seconds."
+echo "Restart initiated - agent will reconnect shortly."
