@@ -13,6 +13,10 @@ config :manfrod, ManfrodWeb.Endpoint,
   live_view: [signing_salt: "5e3ieG0i"],
   code_reloader: true
 
+config :logger,
+  handle_otp_reports: true,
+  handle_sasl_reports: true
+
 config :logger, :default_formatter,
   format: "[$level] $message\n",
   metadata: [:request_id]

@@ -2,7 +2,9 @@ defmodule Manfrod.Events.Persister do
   @moduledoc """
   GenServer that subscribes to agent activity and persists events.
 
-  Also handles periodic cleanup of events older than 7 days.
+  Handles periodic cleanup with different retention periods:
+  - Log events: 24 hours
+  - All other events: 7 days
   """
   use GenServer
 
@@ -12,7 +14,8 @@ defmodule Manfrod.Events.Persister do
   alias Manfrod.Events.Activity
   alias Manfrod.Events.Store
 
-  @retention_days 7
+  @event_retention_days 7
+  @log_retention_hours 24
   @cleanup_interval :timer.hours(1)
 
   def start_link(opts) do
@@ -41,10 +44,18 @@ defmodule Manfrod.Events.Persister do
   end
 
   def handle_info(:cleanup, state) do
-    {count, _} = Store.delete_older_than(@retention_days)
+    # Clean up logs (24 hour retention)
+    {log_count, _} = Store.delete_logs_older_than(@log_retention_hours)
 
-    if count > 0 do
-      Logger.info("Cleaned up #{count} audit events older than #{@retention_days} days")
+    # Clean up other events (7 day retention)
+    {event_count, _} = Store.delete_older_than(@event_retention_days)
+
+    total = log_count + event_count
+
+    if total > 0 do
+      Logger.info(
+        "Cleaned up #{total} events (#{log_count} logs >#{@log_retention_hours}h, #{event_count} events >#{@event_retention_days}d)"
+      )
     end
 
     schedule_cleanup()

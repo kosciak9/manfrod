@@ -4,12 +4,21 @@ defmodule Manfrod.Events.Activity do
 
   ## Types
 
+  Messages:
+  - `:message_received` - incoming message from any source (telegram, web, cron)
+
+  Actions (tool/command execution):
+  - `:action_started` - action beginning (shell, eval, code write, etc.)
+  - `:action_completed` - action finished with result, duration, success/fail
+
   Agent (conversation):
   - `:thinking` - message received, starting LLM call
   - `:narrating` - agent explaining what it's doing (text between tool calls)
-  - `:working` - executing tool
   - `:responding` - final response ready
   - `:idle` - conversation timed out
+
+  Logs (BEAM-wide):
+  - `:log` - captured from Logger (debug, info, warning, error levels)
 
   Memory:
   - `:memory_searched` - graph search performed
@@ -30,26 +39,36 @@ defmodule Manfrod.Events.Activity do
   ## Fields
 
   - `id` - unique event id (UUID)
-  - `source` - origin of the event (:telegram, :memory, :extractor, :retrospector, etc.)
+  - `source` - origin of the event (:telegram, :memory, :extractor, :retrospector, :logger, etc.)
   - `reply_to` - opaque reference for response routing (chat_id, pid, etc.)
   - `type` - activity type atom
   - `meta` - optional map with extra context
   - `timestamp` - when the event occurred
   """
 
+  # Messages
   @type activity_type ::
-          :thinking
+          :message_received
+          # Actions
+          | :action_started
+          | :action_completed
+          # Agent
+          | :thinking
           | :narrating
-          | :working
           | :responding
           | :idle
+          # Logs
+          | :log
+          # Memory
           | :memory_searched
           | :memory_node_created
           | :memory_link_created
           | :memory_node_processed
+          # Extraction
           | :extraction_started
           | :extraction_completed
           | :extraction_failed
+          # Retrospection
           | :retrospection_started
           | :retrospection_completed
           | :retrospection_failed
@@ -71,10 +90,11 @@ defmodule Manfrod.Events.Activity do
 
   ## Examples
 
+      Activity.new(:message_received, %{source: :telegram, meta: %{content: "Hello", from_id: 123}})
+      Activity.new(:action_started, %{source: :agent, meta: %{action: "run_shell", action_id: "abc123", args: %{command: "ls"}}})
+      Activity.new(:action_completed, %{source: :agent, meta: %{action_id: "abc123", result: "file1\\nfile2", duration_ms: 150, success: true}})
       Activity.new(:thinking, %{source: :telegram, reply_to: 456})
-      Activity.new(:narrating, %{source: :telegram, reply_to: 456, meta: %{text: "Let me check..."}})
-      Activity.new(:working, %{source: :telegram, reply_to: 456, meta: %{tool: "run_shell"}})
-      Activity.new(:responding, %{source: :telegram, reply_to: 456, meta: %{content: "Hello!"}})
+      Activity.new(:log, %{source: :logger, meta: %{level: :error, message: "Something failed", module: MyApp.Worker}})
   """
   def new(type, attrs \\ %{}) when is_atom(type) do
     %__MODULE__{

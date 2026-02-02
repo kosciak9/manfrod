@@ -11,11 +11,12 @@ defmodule Manfrod.Agent do
   The Agent broadcasts Activity events instead of calling handlers directly:
   - `:thinking` - message received, starting LLM call
   - `:narrating` - agent explaining what it's doing (text between tool calls)
-  - `:working` - executing tool
+  - `:action_started` - beginning action execution (tool name, args)
+  - `:action_completed` - action finished (result, duration, success/fail)
   - `:responding` - final response ready
   - `:idle` - conversation timed out
 
-  Subscribers (Telegram.ActivityHandler, Memory.FlushHandler, AuditLive) handle
+  Subscribers (Telegram.ActivityHandler, Memory.FlushHandler, ActivityLive) handle
   these events appropriately for their context.
 
   ## Message persistence
@@ -353,19 +354,37 @@ defmodule Manfrod.Agent do
               # Execute each tool and add results
               messages_with_results =
                 Enum.reduce(tool_calls, messages_with_assistant, fn tool_call, msgs ->
-                  # Broadcast working activity for each tool
+                  action_id = generate_action_id()
+                  action_name = tool_call.function.name
+                  args = tool_call.function.arguments
+
+                  # Broadcast action started
                   Events.broadcast(
-                    :working,
+                    :action_started,
                     Map.put(event_ctx, :meta, %{
-                      tool: tool_call.function.name,
-                      args: tool_call.function.arguments
+                      action_id: action_id,
+                      action: action_name,
+                      args: args
                     })
                   )
 
-                  result = execute_tool(tool_call)
+                  # Execute and time the action
+                  {result, duration_ms, success} = timed_execute_tool(tool_call)
+
+                  # Broadcast action completed
+                  Events.broadcast(
+                    :action_completed,
+                    Map.put(event_ctx, :meta, %{
+                      action_id: action_id,
+                      action: action_name,
+                      result: truncate_result(result),
+                      duration_ms: duration_ms,
+                      success: success
+                    })
+                  )
 
                   tool_result_msg =
-                    ReqLLM.Context.tool_result(tool_call.id, tool_call.function.name, result)
+                    ReqLLM.Context.tool_result(tool_call.id, action_name, result)
 
                   msgs ++ [tool_result_msg]
                 end)
@@ -385,6 +404,15 @@ defmodule Manfrod.Agent do
     end
   end
 
+  defp timed_execute_tool(tool_call) do
+    start_time = System.monotonic_time(:millisecond)
+    {result, success} = execute_tool(tool_call)
+    end_time = System.monotonic_time(:millisecond)
+    duration_ms = end_time - start_time
+
+    {result, duration_ms, success}
+  end
+
   defp execute_tool(tool_call) do
     tool_name = tool_call.function.name
     args_json = tool_call.function.arguments
@@ -396,17 +424,27 @@ defmodule Manfrod.Agent do
 
         if tool do
           case ReqLLM.Tool.execute(tool, args) do
-            {:ok, result} -> result
-            {:error, reason} -> "Tool error: #{inspect(reason)}"
+            {:ok, result} -> {result, true}
+            {:error, reason} -> {"Tool error: #{inspect(reason)}", false}
           end
         else
-          "Unknown tool: #{tool_name}"
+          {"Unknown tool: #{tool_name}", false}
         end
 
       {:error, _} ->
-        "Failed to parse tool arguments"
+        {"Failed to parse tool arguments", false}
     end
   end
+
+  defp generate_action_id do
+    Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+  end
+
+  defp truncate_result(result) when byte_size(result) > 500 do
+    String.slice(result, 0, 497) <> "..."
+  end
+
+  defp truncate_result(result), do: result
 
   defp get_memory_context(query) do
     soul = Memory.get_soul()

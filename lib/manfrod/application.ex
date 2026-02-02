@@ -20,7 +20,20 @@ defmodule Manfrod.Application do
       ] ++ telegram_children()
 
     opts = [strategy: :one_for_one, name: Manfrod.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    # Add logger handler after PubSub is running
+    add_log_handler()
+
+    result
+  end
+
+  defp add_log_handler do
+    handler_config = %{
+      level: :all
+    }
+
+    :logger.add_handler(:manfrod_log_handler, Manfrod.Events.LogHandler, handler_config)
   end
 
   defp telegram_children do

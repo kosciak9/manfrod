@@ -3,7 +3,7 @@ defmodule Manfrod.Telegram.ActivityHandler do
   Handles agent activity events for Telegram.
 
   Subscribes to the event bus and:
-  - Sends typing indicators on :thinking and :working events
+  - Sends typing indicators on :thinking and :action_started events
   - Delivers responses on :responding events
   """
   use GenServer
@@ -46,25 +46,23 @@ defmodule Manfrod.Telegram.ActivityHandler do
   end
 
   defp handle_activity(%Activity{
-         type: :working,
+         type: :action_started,
          reply_to: chat_id,
-         meta: %{tool: tool_name, args: args}
+         meta: %{action: action_name, args: args}
        }) do
     send_typing(chat_id)
-    # Send tool call notification with args formatted as code
-    html = "🔧 " <> Formatter.format_tool_call(tool_name, args)
+    # Send action notification with args formatted as code
+    html = "🔧 " <> Formatter.format_tool_call(action_name, args)
     Sender.send_html(chat_id, html)
   end
 
-  defp handle_activity(%Activity{type: :working, reply_to: chat_id, meta: %{tool: tool_name}}) do
+  defp handle_activity(%Activity{type: :action_started, reply_to: chat_id}) do
     send_typing(chat_id)
-    # Send tool call notification (no args available - legacy format)
-    html = "🔧 " <> Formatter.format_tool_call(tool_name, nil)
-    Sender.send_html(chat_id, html)
   end
 
-  defp handle_activity(%Activity{type: :working, reply_to: chat_id}) do
-    send_typing(chat_id)
+  defp handle_activity(%Activity{type: :action_completed}) do
+    # No notification needed for action completion
+    :ok
   end
 
   defp handle_activity(%Activity{type: :responding, reply_to: chat_id, meta: %{content: content}}) do

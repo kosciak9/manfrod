@@ -12,6 +12,8 @@ defmodule Manfrod.Telegram.Bot do
 
   require Logger
 
+  alias Manfrod.Events
+
   def bot, do: @bot
 
   # Handle /start command
@@ -46,7 +48,16 @@ defmodule Manfrod.Telegram.Bot do
   # Handle regular text messages
   def handle({:text, text, msg}, _context) do
     if allowed?(msg) do
-      Logger.info("Telegram message received: #{String.slice(text, 0, 50)}...")
+      # Broadcast message received event for activity feed
+      Events.broadcast(:message_received, %{
+        source: :telegram,
+        meta: %{
+          content: text,
+          from_id: msg.from.id,
+          chat_id: msg.chat.id,
+          message_id: msg.message_id
+        }
+      })
 
       # Send to Agent inbox - ActivityHandler will handle typing and responses
       Manfrod.Agent.send_message(%{
