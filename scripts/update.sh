@@ -89,13 +89,14 @@ mix run -e "Manfrod.Deployment.mark_updating(\"$NEW_SHA\")"
 echo ""
 
 # 7. Restart service
-echo ">>> Restarting manfrod service..."
-sudo systemctl restart manfrod
+# Use systemd-run to schedule restart outside current process tree
+echo ">>> Scheduling service restart..."
+echo "The agent will die and come back with restored context."
+sudo systemd-run --on-active=2s --timer-property=AccuracySec=100ms systemctl restart manfrod
 
 echo ""
 echo "=== Update complete ==="
 echo "Finished at: $(date)"
 echo ""
 echo "New commit: $NEW_SHA"
-echo "Check status: sudo systemctl status manfrod"
-echo "View logs: journalctl -u manfrod -f"
+echo "Restart scheduled - agent will reconnect in ~2 seconds."
