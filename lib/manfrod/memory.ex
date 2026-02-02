@@ -89,6 +89,20 @@ defmodule Manfrod.Memory do
     |> Repo.one()
   end
 
+  @doc """
+  Get conversations from the last N hours with their messages preloaded.
+  Useful for self-improvement retrospectives.
+  """
+  def get_recent_conversations(hours \\ 24) do
+    cutoff = DateTime.utc_now() |> DateTime.add(-hours, :hour)
+
+    Conversation
+    |> where([c], c.ended_at >= ^cutoff)
+    |> order_by([c], desc: c.ended_at)
+    |> preload(:messages)
+    |> Repo.all()
+  end
+
   # --- Soul ---
 
   @doc """

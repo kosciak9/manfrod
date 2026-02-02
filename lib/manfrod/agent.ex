@@ -424,7 +424,7 @@ defmodule Manfrod.Agent do
 
   defp call_llm_with_tools(messages, event_ctx, iteration \\ 0) do
     # Prevent infinite tool loops
-    if iteration > 10 do
+    if iteration > 50 do
       {:error, :max_tool_iterations}
     else
       case call_llm(messages) do
