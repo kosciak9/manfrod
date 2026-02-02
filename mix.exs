@@ -35,7 +35,8 @@ defmodule Manfrod.MixProject do
       {:tidewave, "~> 0.5.4"},
       {:ex_gram, "~> 0.57"},
       {:pgvector, "~> 0.3"},
-      {:paradex, "~> 0.4"}
+      {:paradex, "~> 0.4"},
+      {:earmark, "~> 1.4"}
     ]
   end
 

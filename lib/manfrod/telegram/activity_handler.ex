@@ -12,6 +12,7 @@ defmodule Manfrod.Telegram.ActivityHandler do
 
   alias Manfrod.Events
   alias Manfrod.Events.Activity
+  alias Manfrod.Telegram.Formatter
   alias Manfrod.Telegram.Sender
 
   def start_link(opts \\ []) do
@@ -41,13 +42,25 @@ defmodule Manfrod.Telegram.ActivityHandler do
 
   defp handle_activity(%Activity{type: :narrating, reply_to: chat_id, meta: %{text: text}}) do
     # Send agent's narrative/explanation text (e.g., "Let me check the source code...")
-    Sender.send(chat_id, "💭 #{text}")
+    Sender.send_formatted(chat_id, "💭 #{text}")
+  end
+
+  defp handle_activity(%Activity{
+         type: :working,
+         reply_to: chat_id,
+         meta: %{tool: tool_name, args: args}
+       }) do
+    send_typing(chat_id)
+    # Send tool call notification with args formatted as code
+    html = "🔧 " <> Formatter.format_tool_call(tool_name, args)
+    Sender.send_html(chat_id, html)
   end
 
   defp handle_activity(%Activity{type: :working, reply_to: chat_id, meta: %{tool: tool_name}}) do
     send_typing(chat_id)
-    # Send tool call notification to user
-    Sender.send(chat_id, "🔧 #{tool_name}")
+    # Send tool call notification (no args available - legacy format)
+    html = "🔧 " <> Formatter.format_tool_call(tool_name, nil)
+    Sender.send_html(chat_id, html)
   end
 
   defp handle_activity(%Activity{type: :working, reply_to: chat_id}) do
@@ -55,7 +68,7 @@ defmodule Manfrod.Telegram.ActivityHandler do
   end
 
   defp handle_activity(%Activity{type: :responding, reply_to: chat_id, meta: %{content: content}}) do
-    case Sender.send(chat_id, content) do
+    case Sender.send_formatted(chat_id, content) do
       {:ok, _} ->
         Logger.info("Telegram: sent response to chat #{chat_id}")
 

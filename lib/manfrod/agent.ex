@@ -341,7 +341,10 @@ defmodule Manfrod.Agent do
                   # Broadcast working activity for each tool
                   Events.broadcast(
                     :working,
-                    Map.put(event_ctx, :meta, %{tool: tool_call.function.name})
+                    Map.put(event_ctx, :meta, %{
+                      tool: tool_call.function.name,
+                      args: tool_call.function.arguments
+                    })
                   )
 
                   result = execute_tool(tool_call)
