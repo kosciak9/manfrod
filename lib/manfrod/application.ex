@@ -10,6 +10,7 @@ defmodule Manfrod.Application do
         Manfrod.Repo,
         {Phoenix.PubSub, name: Manfrod.PubSub},
         # Event handlers (subscribe to PubSub)
+        Manfrod.Events.Persister,
         Manfrod.Memory.FlushHandler,
         Manfrod.Telegram.ActivityHandler,
         # Core agent

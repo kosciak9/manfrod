@@ -11,6 +11,7 @@ defmodule ManfrodWeb.AuditLive do
 
   alias Manfrod.Events
   alias Manfrod.Events.Activity
+  alias Manfrod.Events.Store
 
   # ~100kb cap, rough estimate ~500 bytes per event = 200 events
   @max_events 200
@@ -24,7 +25,9 @@ defmodule ManfrodWeb.AuditLive do
       Logger.info("AuditLive: not connected yet")
     end
 
-    {:ok, assign(socket, events: [])}
+    # Load persisted events on mount
+    events = Store.list_recent(@max_events)
+    {:ok, assign(socket, events: events)}
   end
 
   @impl true
