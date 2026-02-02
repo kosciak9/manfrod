@@ -83,7 +83,12 @@ echo ">>> Running migrations..."
 mix ecto.migrate
 echo ""
 
-# 6. Restart service
+# 6. Mark update in DB so agent knows to restore context
+echo ">>> Marking update in database..."
+mix run -e "Manfrod.Deployment.mark_updating(\"$NEW_SHA\")"
+echo ""
+
+# 7. Restart service
 echo ">>> Restarting manfrod service..."
 sudo systemctl restart manfrod
 
