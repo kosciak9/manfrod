@@ -36,8 +36,8 @@ config :manfrod, Oban,
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,
      crontab: [
-       # Every 2 hours - retrospection
-       {"0 */2 * * *", Manfrod.Workers.RetrospectionWorker},
+       # Every hour - retrospection
+       {"0 * * * *", Manfrod.Workers.RetrospectionWorker},
        # Every hour - schedule triggers for next 48h
        {"0 * * * *", Manfrod.Workers.SchedulerWorker}
      ]}
