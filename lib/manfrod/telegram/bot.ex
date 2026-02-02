@@ -39,9 +39,20 @@ defmodule Manfrod.Telegram.Bot do
       Commands:
       /start - Start the bot
       /help - Show this help
+      /idle - Close conversation and save notes
       """)
     else
       log_blocked(msg, "/help")
+    end
+  end
+
+  # Handle /idle command - manually trigger conversation close
+  def handle({:command, "idle", msg}, _context) do
+    if allowed?(msg) do
+      Manfrod.Agent.trigger_idle(%{source: :telegram, reply_to: msg.chat.id})
+      :ok
+    else
+      log_blocked(msg, "/idle")
     end
   end
 

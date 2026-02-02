@@ -147,6 +147,15 @@ defmodule Manfrod.Agent do
     GenServer.cast(__MODULE__, {:message, message})
   end
 
+  @doc """
+  Manually trigger idle state (close conversation and extract memories).
+
+  Used for the /idle command to let users explicitly end a conversation.
+  """
+  def trigger_idle(event_ctx) do
+    GenServer.cast(__MODULE__, {:trigger_idle, event_ctx})
+  end
+
   # Tool callbacks (called by ReqLLM when LLM invokes tools)
 
   def tool_list_modules(%{filter: "manfrod"}) do
@@ -273,6 +282,26 @@ defmodule Manfrod.Agent do
     timer_ref = Process.send_after(self(), {:flush, event_ctx}, @flush_delay)
 
     {:noreply, %{new_state | flush_timer: timer_ref}}
+  end
+
+  @impl true
+  def handle_cast({:trigger_idle, event_ctx}, state) do
+    Logger.info("Manual idle triggered via /idle command")
+
+    # Cancel any pending flush timer
+    if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
+
+    # Broadcast idle event - FlushHandler will trigger extraction
+    Events.broadcast(:idle, event_ctx)
+
+    # Reset to fresh conversation state
+    system_message = ReqLLM.Context.system(build_system_prompt())
+
+    {:noreply,
+     %{
+       messages: [system_message],
+       flush_timer: nil
+     }}
   end
 
   @impl true

@@ -75,9 +75,9 @@ defmodule Manfrod.Telegram.ActivityHandler do
     end
   end
 
-  defp handle_activity(%Activity{type: :idle}) do
-    # No action needed for idle on Telegram side
-    :ok
+  defp handle_activity(%Activity{type: :idle, reply_to: chat_id}) do
+    # Send a silent italic message indicating conversation is closing
+    Sender.send_silent(chat_id, "<i>closing the conversation and writing down notes...</i>")
   end
 
   defp handle_activity(_activity) do

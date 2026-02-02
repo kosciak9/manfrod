@@ -71,6 +71,17 @@ defmodule Manfrod.Telegram.Sender do
   end
 
   @doc """
+  Send a silent HTML message (no notification).
+
+  Used for system messages like conversation closing.
+  Falls back to plain text if HTML parsing fails.
+  """
+  def send_silent(chat_id, html, opts \\ []) do
+    opts = Keyword.put(opts, :disable_notification, true)
+    send_html(chat_id, html, opts)
+  end
+
+  @doc """
   Send a pre-formatted HTML message (no markdown conversion).
 
   Use this when you've already formatted the HTML yourself (e.g., tool calls).
