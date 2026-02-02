@@ -36,7 +36,8 @@ defmodule Manfrod.MixProject do
       {:ex_gram, "~> 0.57"},
       {:pgvector, "~> 0.3"},
       {:paradex, "~> 0.4"},
-      {:earmark, "~> 1.4"}
+      {:earmark, "~> 1.4"},
+      {:oban, "~> 2.20"}
     ]
   end
 

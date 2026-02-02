@@ -19,5 +19,19 @@ config :logger, :default_formatter,
 
 config :phoenix, :json_library, Jason
 
+# Oban (job processing)
+config :manfrod, Oban,
+  engine: Oban.Engines.Basic,
+  repo: Manfrod.Repo,
+  queues: [default: 10, retrospection: 1],
+  plugins: [
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
+    {Oban.Plugins.Cron,
+     crontab: [
+       # Every 2 hours
+       {"0 */2 * * *", Manfrod.Workers.RetrospectionWorker}
+     ]}
+  ]
+
 # ExGram (Telegram bot)
 config :ex_gram, adapter: ExGram.Adapter.Req

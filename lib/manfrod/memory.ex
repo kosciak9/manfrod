@@ -4,12 +4,15 @@ defmodule Manfrod.Memory do
   Hybrid retrieval via pgvector (semantic) + ParadeDB BM25 (keyword).
 
   Also manages conversations and messages for provenance tracking.
+
+  All mutating operations emit events to the event bus for audit visibility.
   """
 
   import Ecto.Query
   import Pgvector.Ecto.Query
   import Paradex
 
+  alias Manfrod.Events
   alias Manfrod.Repo
   alias Manfrod.Memory.{Conversation, Message, Node, Link}
 
@@ -89,9 +92,26 @@ defmodule Manfrod.Memory do
   # --- Nodes ---
 
   def create_node(attrs) do
-    %Node{}
-    |> Node.changeset(attrs)
-    |> Repo.insert()
+    result =
+      %Node{}
+      |> Node.changeset(attrs)
+      |> Repo.insert()
+
+    case result do
+      {:ok, node} ->
+        Events.broadcast(:memory_node_created, %{
+          source: :memory,
+          meta: %{
+            node_id: node.id,
+            content_preview: String.slice(node.content, 0, 100)
+          }
+        })
+
+        {:ok, node}
+
+      error ->
+        error
+    end
   end
 
   def list_nodes(opts \\ []) do
@@ -112,12 +132,50 @@ defmodule Manfrod.Memory do
     |> Repo.all()
   end
 
+  @doc """
+  Get a node by ID.
+  """
+  def get_node(id) do
+    Repo.get(Node, id)
+  end
+
+  @doc """
+  Mark a node as processed (integrated into the graph).
+  """
+  def mark_processed(node_id) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    from(n in Node, where: n.id == ^node_id)
+    |> Repo.update_all(set: [processed_at: now])
+
+    Events.broadcast(:memory_node_processed, %{
+      source: :memory,
+      meta: %{node_id: node_id}
+    })
+
+    :ok
+  end
+
   # --- Links ---
 
   def create_link(node_a_id, node_b_id) do
-    %Link{}
-    |> Link.changeset(%{node_a_id: node_a_id, node_b_id: node_b_id})
-    |> Repo.insert(on_conflict: :nothing)
+    result =
+      %Link{}
+      |> Link.changeset(%{node_a_id: node_a_id, node_b_id: node_b_id})
+      |> Repo.insert(on_conflict: :nothing)
+
+    case result do
+      {:ok, link} ->
+        Events.broadcast(:memory_link_created, %{
+          source: :memory,
+          meta: %{node_a_id: link.node_a_id, node_b_id: link.node_b_id}
+        })
+
+        {:ok, link}
+
+      error ->
+        error
+    end
   end
 
   # --- Hybrid Search ---
@@ -143,7 +201,17 @@ defmodule Manfrod.Memory do
         |> Enum.uniq_by(& &1.id)
         |> Enum.take(limit)
 
-      {:ok, expand_with_links(merged, limit * 2)}
+      results = expand_with_links(merged, limit * 2)
+
+      Events.broadcast(:memory_searched, %{
+        source: :memory,
+        meta: %{
+          query_preview: String.slice(query_text, 0, 100),
+          result_count: length(results)
+        }
+      })
+
+      {:ok, results}
     end
   end
 

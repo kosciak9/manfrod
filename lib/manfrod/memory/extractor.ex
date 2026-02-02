@@ -12,7 +12,7 @@ defmodule Manfrod.Memory.Extractor do
   """
 
   require Logger
-  alias Manfrod.{Memory, Voyage}
+  alias Manfrod.{Events, Memory, Voyage}
 
   @base_url "https://opencode.ai/zen/v1"
   @model_id "kimi-k2.5-free"
@@ -67,12 +67,26 @@ defmodule Manfrod.Memory.Extractor do
   defp do_extract_and_store(messages) do
     conversation_text = format_messages(messages)
 
+    Events.broadcast(:extraction_started, %{
+      source: :extractor,
+      meta: %{message_count: length(messages)}
+    })
+
     with {:ok, summary} <- generate_summary(conversation_text),
          {:ok, conversation} <- Memory.close_conversation(%{summary: summary}),
          {:ok, node_ids} <- extract_and_create_nodes(conversation_text, conversation.id) do
       Logger.info(
         "Extracted conversation #{conversation.id}: #{length(node_ids)} nodes, summary: #{String.slice(summary, 0, 50)}..."
       )
+
+      Events.broadcast(:extraction_completed, %{
+        source: :extractor,
+        meta: %{
+          conversation_id: conversation.id,
+          node_count: length(node_ids),
+          summary_preview: String.slice(summary, 0, 100)
+        }
+      })
 
       {:ok, conversation, node_ids}
     else
@@ -82,6 +96,12 @@ defmodule Manfrod.Memory.Extractor do
 
       {:error, reason} = err ->
         Logger.error("Extraction failed: #{inspect(reason)}")
+
+        Events.broadcast(:extraction_failed, %{
+          source: :extractor,
+          meta: %{reason: inspect(reason)}
+        })
+
         err
     end
   end

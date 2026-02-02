@@ -9,6 +9,7 @@ defmodule Manfrod.Application do
       [
         Manfrod.Repo,
         {Phoenix.PubSub, name: Manfrod.PubSub},
+        {Oban, Application.fetch_env!(:manfrod, Oban)},
         # Event handlers (subscribe to PubSub)
         Manfrod.Events.Persister,
         Manfrod.Memory.FlushHandler,

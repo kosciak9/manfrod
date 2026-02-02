@@ -4,23 +4,55 @@ defmodule Manfrod.Events.Activity do
 
   ## Types
 
+  Agent (conversation):
   - `:thinking` - message received, starting LLM call
   - `:narrating` - agent explaining what it's doing (text between tool calls)
   - `:working` - executing tool
   - `:responding` - final response ready
   - `:idle` - conversation timed out
 
+  Memory:
+  - `:memory_searched` - graph search performed
+  - `:memory_node_created` - new node created
+  - `:memory_link_created` - new link created
+  - `:memory_node_processed` - node marked as processed
+
+  Extraction:
+  - `:extraction_started` - extraction began
+  - `:extraction_completed` - extraction finished successfully
+  - `:extraction_failed` - extraction failed
+
+  Retrospection:
+  - `:retrospection_started` - retrospection began
+  - `:retrospection_completed` - retrospection finished successfully
+  - `:retrospection_failed` - retrospection failed
+
   ## Fields
 
   - `id` - unique event id (UUID)
-  - `source` - origin of the request (:telegram, :cron, :web, etc.)
+  - `source` - origin of the event (:telegram, :memory, :extractor, :retrospector, etc.)
   - `reply_to` - opaque reference for response routing (chat_id, pid, etc.)
   - `type` - activity type atom
   - `meta` - optional map with extra context
   - `timestamp` - when the event occurred
   """
 
-  @type activity_type :: :thinking | :narrating | :working | :responding | :idle
+  @type activity_type ::
+          :thinking
+          | :narrating
+          | :working
+          | :responding
+          | :idle
+          | :memory_searched
+          | :memory_node_created
+          | :memory_link_created
+          | :memory_node_processed
+          | :extraction_started
+          | :extraction_completed
+          | :extraction_failed
+          | :retrospection_started
+          | :retrospection_completed
+          | :retrospection_failed
 
   @type t :: %__MODULE__{
           id: String.t(),

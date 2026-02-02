@@ -1,0 +1,350 @@
+defmodule Manfrod.Memory.Retrospector do
+  @moduledoc """
+  Autonomous agent that builds the zettelkasten.
+
+  Given unprocessed nodes (the slipbox) and tools to manipulate the graph,
+  the agent decides how to integrate new knowledge. Structure emerges from
+  the agent's decisions, not from prescribed rules.
+
+  ## Tools available to the agent
+
+  - `search` - semantic + keyword search over the graph
+  - `get_node` - fetch a node by ID
+  - `create_node` - create a new node (returns ID)
+  - `create_link` - link two nodes by ID
+  - `mark_processed` - mark a node as integrated into the graph
+  """
+
+  require Logger
+
+  alias Manfrod.{Events, Memory, Voyage}
+
+  @base_url "https://opencode.ai/zen/v1"
+  @model_id "kimi-k2.5-free"
+
+  # Embed zettelkasten guide at compile time
+  @external_resource Path.join(__DIR__, "zettelkasten.md")
+  @zettelkasten_guide File.read!(Path.join(__DIR__, "zettelkasten.md"))
+
+  @system_prompt """
+  You are iteratively building a zettelkasten - a personal knowledge graph for
+  yourself, composed of atomic notes.
+
+  You have access to:
+  - Unprocessed notes from recent conversations (the slipbox)
+  - The existing knowledge graph (via search)
+  - Tools to create nodes, create links, and mark notes as processed
+
+  Work through the slipbox thoughtfully. When finished, say "Done."
+
+  Here is a guide on zettelkasten best practices:
+
+  #{@zettelkasten_guide}
+  """
+
+  # Tool definitions
+  defp tools do
+    [
+      ReqLLM.Tool.new!(
+        name: "search",
+        description:
+          "Search the knowledge graph for related nodes. Uses semantic similarity and keyword matching.",
+        parameter_schema: [
+          query: [type: :string, required: true, doc: "Search query text"],
+          limit: [type: :integer, doc: "Maximum results to return (default: 5)"]
+        ],
+        callback: &tool_search/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "get_node",
+        description: "Fetch a specific node by its ID to see its full content.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "Node UUID"]
+        ],
+        callback: &tool_get_node/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "create_node",
+        description:
+          "Create a new node in the knowledge graph. Returns the new node's ID. New nodes are created as already processed (they're derived insights, not raw observations).",
+        parameter_schema: [
+          content: [
+            type: :string,
+            required: true,
+            doc: "The atomic idea or fact (1-2 sentences)"
+          ]
+        ],
+        callback: &tool_create_node/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "create_link",
+        description: "Create an undirected link between two nodes.",
+        parameter_schema: [
+          node_a_id: [type: :string, required: true, doc: "First node UUID"],
+          node_b_id: [type: :string, required: true, doc: "Second node UUID"]
+        ],
+        callback: &tool_create_link/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "mark_processed",
+        description:
+          "Mark a slipbox node as processed (integrated into the graph). Call this when you're done working with a node.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "Node UUID to mark as processed"]
+        ],
+        callback: &tool_mark_processed/1
+      )
+    ]
+  end
+
+  # Tool callbacks
+
+  def tool_search(%{query: query} = args) do
+    limit = Map.get(args, :limit, 5)
+
+    case Memory.search(query, limit: limit) do
+      {:ok, nodes} when nodes == [] ->
+        {:ok, "No matching nodes found."}
+
+      {:ok, nodes} ->
+        result =
+          nodes
+          |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
+          |> Enum.join("\n")
+
+        {:ok, "Found #{length(nodes)} nodes:\n#{result}"}
+
+      {:error, reason} ->
+        {:ok, "Search failed: #{inspect(reason)}"}
+    end
+  end
+
+  def tool_get_node(%{id: id}) do
+    case Memory.get_node(id) do
+      nil ->
+        {:ok, "Node not found: #{id}"}
+
+      node ->
+        processed = if node.processed_at, do: "yes", else: "no (in slipbox)"
+        {:ok, "Node #{id}:\nContent: #{node.content}\nProcessed: #{processed}"}
+    end
+  end
+
+  def tool_create_node(%{content: content}) do
+    case Voyage.embed_query(content) do
+      {:ok, embedding} ->
+        now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+        case Memory.create_node(%{
+               content: content,
+               embedding: embedding,
+               processed_at: now
+             }) do
+          {:ok, node} ->
+            {:ok, "Created node: #{node.id}"}
+
+          {:error, changeset} ->
+            {:ok, "Failed to create node: #{inspect(changeset.errors)}"}
+        end
+
+      {:error, reason} ->
+        {:ok, "Failed to generate embedding: #{inspect(reason)}"}
+    end
+  end
+
+  def tool_create_link(%{node_a_id: a, node_b_id: b}) do
+    case Memory.create_link(a, b) do
+      {:ok, _link} ->
+        {:ok, "Linked #{a} <-> #{b}"}
+
+      {:error, changeset} ->
+        {:ok, "Failed to create link: #{inspect(changeset.errors)}"}
+    end
+  end
+
+  def tool_mark_processed(%{id: id}) do
+    Memory.mark_processed(id)
+    {:ok, "Marked #{id} as processed"}
+  end
+
+  # Public API
+
+  @doc """
+  Process the slipbox - run the retrospection agent.
+  Returns :ok or {:error, reason}.
+  """
+  def process_slipbox(opts \\ []) do
+    batch_size = Keyword.get(opts, :batch_size, 20)
+    slipbox = Memory.get_slipbox_nodes(limit: batch_size)
+
+    if slipbox == [] do
+      Logger.debug("Retrospector: slipbox is empty")
+      :ok
+    else
+      Logger.info("Retrospector: processing #{length(slipbox)} nodes from slipbox")
+      run_agent(slipbox)
+    end
+  end
+
+  # Private
+
+  defp run_agent(slipbox) do
+    slipbox_text = format_slipbox(slipbox)
+
+    Events.broadcast(:retrospection_started, %{
+      source: :retrospector,
+      meta: %{slipbox_count: length(slipbox)}
+    })
+
+    user_message = """
+    Here are the unprocessed notes in your slipbox:
+
+    #{slipbox_text}
+
+    Search the existing graph to find connections, create links, and create any new insight nodes as needed. Mark each note as processed when you're done with it.
+    """
+
+    messages = [
+      ReqLLM.Context.system(@system_prompt),
+      ReqLLM.Context.user(user_message)
+    ]
+
+    case call_with_tools(messages, 0, %{nodes_processed: 0, links_created: 0, insights_created: 0}) do
+      {:ok, _final_text, stats} ->
+        Logger.info("Retrospector: agent completed successfully")
+
+        Events.broadcast(:retrospection_completed, %{
+          source: :retrospector,
+          meta: stats
+        })
+
+        :ok
+
+      {:error, reason} = err ->
+        Logger.error("Retrospector: agent failed: #{inspect(reason)}")
+
+        Events.broadcast(:retrospection_failed, %{
+          source: :retrospector,
+          meta: %{reason: inspect(reason)}
+        })
+
+        err
+    end
+  end
+
+  defp format_slipbox(nodes) do
+    nodes
+    |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
+    |> Enum.join("\n")
+  end
+
+  defp call_with_tools(messages, iteration, stats) do
+    if iteration > 20 do
+      {:error, :max_iterations}
+    else
+      case call_llm(messages) do
+        {:ok, response} ->
+          case ReqLLM.Response.finish_reason(response) do
+            :tool_calls ->
+              tool_calls = ReqLLM.Response.tool_calls(response)
+              narrative = ReqLLM.Response.text(response) || ""
+
+              Logger.debug(
+                "Retrospector: executing #{length(tool_calls)} tool(s), iteration #{iteration}"
+              )
+
+              # Add assistant message with tool calls
+              assistant_msg = ReqLLM.Context.assistant(narrative, tool_calls: tool_calls)
+              messages_with_assistant = messages ++ [assistant_msg]
+
+              # Execute tools, add results, and update stats
+              {messages_with_results, new_stats} =
+                Enum.reduce(tool_calls, {messages_with_assistant, stats}, fn tool_call,
+                                                                             {msgs, acc_stats} ->
+                  result = execute_tool(tool_call)
+
+                  tool_result_msg =
+                    ReqLLM.Context.tool_result(tool_call.id, tool_call.function.name, result)
+
+                  updated_stats = update_stats(acc_stats, tool_call.function.name)
+                  {msgs ++ [tool_result_msg], updated_stats}
+                end)
+
+              # Continue
+              call_with_tools(messages_with_results, iteration + 1, new_stats)
+
+            _other ->
+              text = ReqLLM.Response.text(response) || ""
+              Logger.debug("Retrospector: agent finished with: #{String.slice(text, 0, 100)}")
+              {:ok, text, stats}
+          end
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  defp update_stats(stats, "mark_processed"), do: Map.update!(stats, :nodes_processed, &(&1 + 1))
+  defp update_stats(stats, "create_link"), do: Map.update!(stats, :links_created, &(&1 + 1))
+  defp update_stats(stats, "create_node"), do: Map.update!(stats, :insights_created, &(&1 + 1))
+  defp update_stats(stats, _tool), do: stats
+
+  defp execute_tool(tool_call) do
+    tool_name = tool_call.function.name
+    args_json = tool_call.function.arguments
+
+    case Jason.decode(args_json) do
+      {:ok, args} ->
+        tool = Enum.find(tools(), &(&1.name == tool_name))
+
+        if tool do
+          case ReqLLM.Tool.execute(tool, args) do
+            {:ok, result} -> result
+            {:error, reason} -> "Tool error: #{inspect(reason)}"
+          end
+        else
+          "Unknown tool: #{tool_name}"
+        end
+
+      {:error, _} ->
+        "Failed to parse tool arguments"
+    end
+  end
+
+  defp call_llm(messages) do
+    call_llm_with_retry(messages, _retries = 5, _delay = 2000)
+  end
+
+  defp call_llm_with_retry(_messages, 0, _delay) do
+    {:error, :max_retries_exceeded}
+  end
+
+  defp call_llm_with_retry(messages, retries, delay) do
+    api_key = Application.get_env(:manfrod, :zen_api_key)
+    context = ReqLLM.Context.new(messages)
+    model = %{id: @model_id, provider: :openai}
+
+    opts = [
+      base_url: @base_url,
+      api_key: api_key,
+      tools: tools()
+    ]
+
+    case ReqLLM.generate_text(model, context, opts) do
+      {:ok, response} ->
+        {:ok, response}
+
+      {:error, %{status: status}} when status in [429, 500, 502, 503] ->
+        Logger.warning(
+          "Retrospector: rate limited or server error (#{status}), retrying in #{delay}ms..."
+        )
+
+        Process.sleep(delay)
+        call_llm_with_retry(messages, retries - 1, delay * 2)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+end
