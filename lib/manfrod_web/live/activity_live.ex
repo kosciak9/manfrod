@@ -85,22 +85,22 @@ defmodule ManfrodWeb.ActivityLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="h-screen flex flex-col font-mono text-sm bg-[#1F1F28] text-[#DCD7BA]">
+      <div class="h-screen flex flex-col font-mono text-sm bg-zinc-900 text-zinc-200">
         <%!-- Navbar --%>
-        <header class="sticky top-0 z-10 bg-[#16161D] border-b border-[#363646] px-4 py-3">
+        <header class="sticky top-0 z-10 bg-zinc-950 border-b border-zinc-700 px-4 py-3">
           <div class="flex justify-between items-center">
-            <h1 class="text-[#7E9CD8] font-semibold text-base tracking-wide">manfrod activity</h1>
+            <h1 class="text-blue-400 font-semibold text-base tracking-wide">manfrod activity</h1>
             <div class="flex items-center gap-6">
-              <label class="flex items-center gap-2 text-[#727169] cursor-pointer text-xs hover:text-[#DCD7BA] transition-colors">
+              <label class="flex items-center gap-2 text-zinc-500 cursor-pointer text-xs hover:text-zinc-300 transition-colors">
                 <input
                   type="checkbox"
                   checked={@show_all_logs}
                   phx-click="toggle_all_logs"
-                  class="cursor-pointer accent-[#7E9CD8]"
+                  class="cursor-pointer accent-blue-400"
                 />
                 <span>show all logs</span>
               </label>
-              <span class="text-[#54546D] text-xs">
+              <span class="text-zinc-600 text-xs">
                 <%= length(@events) %> events
               </span>
             </div>
@@ -108,8 +108,8 @@ defmodule ManfrodWeb.ActivityLive do
         </header>
 
         <%!-- Column Headers --%>
-        <div class="sticky top-[53px] z-10 bg-[#1F1F28] border-b border-[#363646] px-4">
-          <div class="grid grid-cols-[70px_90px_80px_minmax(0,1fr)] gap-4 py-2 text-xs text-[#54546D] uppercase tracking-wider">
+        <div class="sticky top-[53px] z-10 bg-zinc-900 border-b border-zinc-700 px-4">
+          <div class="grid grid-cols-[max-content_max-content_max-content_1fr] gap-4 p-1 text-xs text-zinc-500 uppercase tracking-wider">
             <span>Time</span>
             <span>Type</span>
             <span>Source</span>
@@ -122,25 +122,25 @@ defmodule ManfrodWeb.ActivityLive do
           <%= for event <- @events do %>
             <div
               class={[
-                "event-row px-4 cursor-pointer transition-colors",
-                type_class(event),
+                "px-4 cursor-pointer transition-colors border-b border-zinc-800",
+                row_bg_class(event),
                 if(MapSet.member?(@expanded, event.id), do: "expanded")
               ]}
               id={"event-#{event.id}"}
               phx-click="toggle_expand"
               phx-value-id={event.id}
             >
-              <div class="grid grid-cols-[70px_90px_80px_minmax(0,1fr)] gap-4 py-2 border-b border-[#2A2A37]">
-                <span class="text-[#727169] tabular-nums"><%= format_time(event.timestamp) %></span>
-                <span class={"font-semibold #{type_class(event)}"}><%= format_type(event) %></span>
-                <span class="text-[#7FB4CA]"><%= event.source || "-" %></span>
-                <span class="text-[#C8C093] overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+              <div class="grid grid-cols-[max-content_max-content_max-content_1fr] gap-4 p-1">
+                <span class="text-zinc-500 tabular-nums"><%= format_time(event.timestamp) %></span>
+                <span class={["font-semibold", type_color_class(event)]}><%= format_type(event) %></span>
+                <span class="text-cyan-400"><%= event.source || "-" %></span>
+                <span class="text-zinc-400 truncate">
                   <%= format_detail(event) %>
                 </span>
               </div>
               <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
-                <div class="py-3 pl-[166px] border-b border-[#2A2A37] bg-[#1A1A22]">
-                  <pre class="m-0 whitespace-pre-wrap break-all text-xs text-[#C8C093] max-h-[300px] overflow-y-auto leading-relaxed"><%= format_expanded(event) %></pre>
+                <div class="py-3 ml-[18rem] border-t border-zinc-800 bg-zinc-950/50">
+                  <pre class="whitespace-pre-wrap break-all text-xs text-zinc-400 max-h-72 overflow-y-auto leading-relaxed"><%= format_expanded(event) %></pre>
                 </div>
               <% end %>
             </div>
@@ -148,67 +148,65 @@ defmodule ManfrodWeb.ActivityLive do
         </div>
       </div>
     </Layouts.app>
-
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Overpass+Mono:wght@400;600&display=swap');
-
-      body {
-        background: #1F1F28 !important;
-        color: #DCD7BA !important;
-        font-family: 'Overpass Mono', monospace !important;
-      }
-
-      main {
-        max-width: none !important;
-        padding: 0 !important;
-      }
-
-      /* Row hover */
-      .event-row:hover { background: #2A2A37; }
-      .event-row.type-log-error:hover { background: rgba(232, 36, 36, 0.15); }
-      .event-row.type-log-warning:hover { background: rgba(255, 158, 59, 0.1); }
-
-      /* Event type colors */
-      .type-thinking, .type-narrating { color: #E6C384; }
-      .type-responding { color: #98BB6C; }
-      .type-idle { color: #727169; }
-      .type-message_received { color: #7FB4CA; }
-      .type-action_started, .type-action_completed { color: #957FB8; }
-      .type-action_completed.success { color: #98BB6C; }
-      .type-action_completed.failure { color: #E82424; }
-      .type-log, .type-log-debug { color: #727169; }
-      .type-log-info { color: #7FB4CA; }
-      .type-log-warning { color: #FF9E3B; }
-      .type-log-error { color: #E82424; }
-      .type-memory_searched, .type-memory_node_created,
-      .type-memory_link_created, .type-memory_node_processed,
-      .type-extraction_started, .type-extraction_completed,
-      .type-retrospection_started, .type-retrospection_completed { color: #7AA89F; }
-      .type-extraction_failed, .type-retrospection_failed { color: #E82424; }
-
-      /* Error/warning line highlights */
-      .event-row.type-log-error { background: rgba(232, 36, 36, 0.1); }
-      .event-row.type-log-warning { background: rgba(255, 158, 59, 0.05); }
-    </style>
     """
   end
 
-  # Type class for CSS styling
-  defp type_class(%Activity{type: :log, meta: %{level: level}}) do
-    "type-log-#{level}"
+  # Row background classes (base + hover)
+  defp row_bg_class(%Activity{type: :log, meta: %{level: :error}}) do
+    "bg-red-950/30 hover:bg-red-950/50"
   end
 
-  defp type_class(%Activity{type: :action_completed, meta: %{success: true}}) do
-    "type-action_completed success"
+  defp row_bg_class(%Activity{type: :log, meta: %{level: :warning}}) do
+    "bg-amber-950/20 hover:bg-amber-950/40"
   end
 
-  defp type_class(%Activity{type: :action_completed, meta: %{success: false}}) do
-    "type-action_completed failure"
+  defp row_bg_class(_event) do
+    "hover:bg-zinc-800"
   end
 
-  defp type_class(%Activity{type: type}) do
-    "type-#{type}"
-  end
+  # Type color classes
+  defp type_color_class(%Activity{type: :log, meta: %{level: :error}}), do: "text-red-500"
+  defp type_color_class(%Activity{type: :log, meta: %{level: :warning}}), do: "text-amber-500"
+  defp type_color_class(%Activity{type: :log, meta: %{level: :info}}), do: "text-cyan-400"
+  defp type_color_class(%Activity{type: :log}), do: "text-zinc-500"
+  defp type_color_class(%Activity{type: :thinking}), do: "text-yellow-400"
+  defp type_color_class(%Activity{type: :narrating}), do: "text-yellow-400"
+  defp type_color_class(%Activity{type: :responding}), do: "text-green-400"
+  defp type_color_class(%Activity{type: :idle}), do: "text-zinc-500"
+  defp type_color_class(%Activity{type: :message_received}), do: "text-cyan-400"
+  defp type_color_class(%Activity{type: :action_started}), do: "text-purple-400"
+
+  defp type_color_class(%Activity{type: :action_completed, meta: %{success: true}}),
+    do: "text-green-400"
+
+  defp type_color_class(%Activity{type: :action_completed, meta: %{success: false}}),
+    do: "text-red-500"
+
+  defp type_color_class(%Activity{type: :action_completed}), do: "text-purple-400"
+
+  defp type_color_class(%Activity{type: type})
+       when type in [
+              :memory_searched,
+              :memory_node_created,
+              :memory_link_created,
+              :memory_node_processed
+            ],
+       do: "text-teal-400"
+
+  defp type_color_class(%Activity{type: type})
+       when type in [
+              :extraction_started,
+              :extraction_completed,
+              :retrospection_started,
+              :retrospection_completed
+            ],
+       do: "text-teal-400"
+
+  defp type_color_class(%Activity{type: type})
+       when type in [:extraction_failed, :retrospection_failed],
+       do: "text-red-500"
+
+  defp type_color_class(_), do: "text-zinc-400"
 
   defp format_time(%DateTime{} = dt) do
     Calendar.strftime(dt, "%H:%M:%S")
@@ -219,23 +217,23 @@ defmodule ManfrodWeb.ActivityLive do
     String.upcase("#{level}")
   end
 
-  defp format_type(%Activity{type: :message_received}), do: "MSG"
-  defp format_type(%Activity{type: :action_started}), do: "ACTION"
-  defp format_type(%Activity{type: :action_completed}), do: "DONE"
+  defp format_type(%Activity{type: :message_received}), do: "MESSAGE"
+  defp format_type(%Activity{type: :action_started}), do: "ACTION:START"
+  defp format_type(%Activity{type: :action_completed}), do: "ACTION:DONE"
   defp format_type(%Activity{type: :thinking}), do: "THINKING"
-  defp format_type(%Activity{type: :narrating}), do: "NARRATE"
-  defp format_type(%Activity{type: :responding}), do: "RESPOND"
+  defp format_type(%Activity{type: :narrating}), do: "NARRATING"
+  defp format_type(%Activity{type: :responding}), do: "RESPONDING"
   defp format_type(%Activity{type: :idle}), do: "IDLE"
-  defp format_type(%Activity{type: :memory_searched}), do: "MEM:SRCH"
-  defp format_type(%Activity{type: :memory_node_created}), do: "MEM:NEW"
-  defp format_type(%Activity{type: :memory_link_created}), do: "MEM:LINK"
-  defp format_type(%Activity{type: :memory_node_processed}), do: "MEM:PROC"
-  defp format_type(%Activity{type: :extraction_started}), do: "EXTRACT"
-  defp format_type(%Activity{type: :extraction_completed}), do: "EXTRACT"
-  defp format_type(%Activity{type: :extraction_failed}), do: "EXTRACT!"
-  defp format_type(%Activity{type: :retrospection_started}), do: "RETRO"
-  defp format_type(%Activity{type: :retrospection_completed}), do: "RETRO"
-  defp format_type(%Activity{type: :retrospection_failed}), do: "RETRO!"
+  defp format_type(%Activity{type: :memory_searched}), do: "MEMORY:SEARCH"
+  defp format_type(%Activity{type: :memory_node_created}), do: "MEMORY:CREATE"
+  defp format_type(%Activity{type: :memory_link_created}), do: "MEMORY:LINK"
+  defp format_type(%Activity{type: :memory_node_processed}), do: "MEMORY:PROCESS"
+  defp format_type(%Activity{type: :extraction_started}), do: "EXTRACT:START"
+  defp format_type(%Activity{type: :extraction_completed}), do: "EXTRACT:DONE"
+  defp format_type(%Activity{type: :extraction_failed}), do: "EXTRACT:FAIL"
+  defp format_type(%Activity{type: :retrospection_started}), do: "RETROSPECT:START"
+  defp format_type(%Activity{type: :retrospection_completed}), do: "RETROSPECT:DONE"
+  defp format_type(%Activity{type: :retrospection_failed}), do: "RETROSPECT:FAIL"
   defp format_type(%Activity{type: type}), do: String.upcase(to_string(type))
 
   # Format detail (one-line summary)

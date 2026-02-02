@@ -28,6 +28,12 @@ manfred-*.tar
 # secrets
 .env
 
+# Tailwind - compiled assets (generated from assets/css/app.css)
+/priv/static/assets/
+
+# Tailwind standalone binary
+/_build/tailwind-*
+
 # LSP
 /.elixir_ls
 /.expert

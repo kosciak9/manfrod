@@ -15,7 +15,17 @@ config :manfrod, ManfrodWeb.Endpoint,
   pubsub_server: Manfrod.PubSub,
   live_view: [signing_salt: "5e3ieG0i"],
   code_reloader: true,
-  render_errors: [formats: [html: ManfrodWeb.ErrorHTML], layout: false]
+  render_errors: [formats: [html: ManfrodWeb.ErrorHTML], layout: false],
+  watchers: [
+    tailwind: {Tailwind, :install_and_run, [:manfrod, ~w(--watch)]}
+  ],
+  reloadable_compilers: [:elixir],
+  live_reload: [
+    patterns: [
+      ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
+      ~r"lib/manfrod_web/(controllers|live|components)/.*(ex|heex)$"
+    ]
+  ]
 
 config :logger,
   handle_otp_reports: true,
@@ -26,6 +36,17 @@ config :logger, :default_formatter,
   metadata: [:request_id]
 
 config :phoenix, :json_library, Jason
+
+# Tailwind
+config :tailwind,
+  version: "4.1.8",
+  manfrod: [
+    args: ~w(
+      --input=assets/css/app.css
+      --output=priv/static/assets/app.css
+    ),
+    cd: Path.expand("..", __DIR__)
+  ]
 
 # Oban (job processing)
 config :manfrod, Oban,

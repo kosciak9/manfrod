@@ -43,15 +43,19 @@ defmodule Manfrod.MixProject do
       {:earmark, "~> 1.4"},
       {:oban, "~> 2.20"},
       {:tzdata, "~> 1.1"},
+      {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:mox, "~> 1.0", only: :test}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
-      "ecto.reset": ["ecto.drop", "ecto.setup"]
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
+      "assets.setup": ["tailwind.install --if-missing"],
+      "assets.build": ["tailwind manfrod"],
+      "assets.deploy": ["tailwind manfrod --minify"]
     ]
   end
 end

@@ -16,12 +16,14 @@ defmodule ManfrodWeb.Layouts do
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="csrf-token" content={Phoenix.Controller.get_csrf_token()} />
         <title>Manfrod</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #e0e0e0; }
-        </style>
-        <script src="/assets/phoenix/phoenix.min.js"></script>
-        <script src="/assets/lv/phoenix_live_view.min.js"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=Overpass+Mono:wght@400;600&display=swap" rel="stylesheet" />
+        <link phx-track-static rel="stylesheet" href="/assets/app.css" />
+        <script src="/assets/phoenix/phoenix.min.js">
+        </script>
+        <script src="/assets/lv/phoenix_live_view.min.js">
+        </script>
         <script>
           let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
           let liveSocket = new LiveView.LiveSocket("/live", Phoenix.Socket, {
@@ -30,7 +32,7 @@ defmodule ManfrodWeb.Layouts do
           liveSocket.connect();
         </script>
       </head>
-      <body>
+      <body class="bg-zinc-900 text-zinc-200 antialiased">
         {@inner_content}
       </body>
     </html>
@@ -41,11 +43,12 @@ defmodule ManfrodWeb.Layouts do
   The app layout - wraps page content.
   """
   attr :flash, :map, default: %{}
+  attr :class, :string, default: nil
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <main style="max-width: 800px; margin: 0 auto; padding: 20px;">
+    <main class={@class}>
       {render_slot(@inner_block)}
     </main>
     """
