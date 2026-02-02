@@ -285,29 +285,81 @@
     # Manfrod Application Deployment
     # =========================================================================
 
-    - name: Create application directory
-      ansible.builtin.file:
-        path: "{{ app_dir }}"
-        state: directory
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
-        mode: "0755"
-      become: true
+    # =========================================================================
+    # Git Repository Setup
+    # =========================================================================
 
-    - name: Sync Manfrod code
-      ansible.posix.synchronize:
-        src: "{{ playbook_dir }}/../../../../"
-        dest: "{{ app_dir }}/"
-        delete: true
-        rsync_opts:
-          - "--exclude=.git"
-          - "--exclude=_build"
-          - "--exclude=deps"
-          - "--exclude=.elixir_ls"
-          - "--exclude=deployment/remote/ansible/.vault_pass"
+    - name: Check if git repo exists
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/.git"
+      register: git_repo
+
+    - name: Clone repository (first deploy)
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ git_branch }}"
       become: true
       become_user: "{{ app_user }}"
+      when: not git_repo.stat.exists
+
+    - name: Create local-customizations branch (first deploy)
+      ansible.builtin.command: git checkout -b {{ git_local_branch }}
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      when: not git_repo.stat.exists
+      register: branch_create
+      changed_when: branch_create.rc == 0
+
+    - name: Configure git user name for agent
+      ansible.builtin.command: git config user.name "Manfrod Agent"
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      changed_when: false
+
+    - name: Configure git user email for agent
+      ansible.builtin.command: git config user.email "agent@manfrod.local"
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      changed_when: false
+
+    - name: Fetch upstream changes (subsequent deploys)
+      ansible.builtin.command: git fetch origin
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      when: git_repo.stat.exists
+      changed_when: false
+
+    - name: Rebase local-customizations onto origin/main (subsequent deploys)
+      ansible.builtin.command: git rebase origin/{{ git_branch }}
+      args:
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      when: git_repo.stat.exists
+      register: rebase_result
+      failed_when: false
+      changed_when: rebase_result.rc == 0 and 'is up to date' not in rebase_result.stdout
       notify: Restart manfrod
+
+    - name: Alert if rebase has conflicts
+      ansible.builtin.fail:
+        msg: |
+          Rebase conflict detected! SSH into server and resolve manually:
+            cd {{ app_dir }}
+            git status
+            # resolve conflicts
+            git rebase --continue
+          Or abort with: git rebase --abort
+      when: git_repo.stat.exists and rebase_result.rc != 0
 
     - name: Deploy .env file
       ansible.builtin.template:

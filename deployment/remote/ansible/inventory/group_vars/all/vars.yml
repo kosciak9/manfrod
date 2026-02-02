@@ -74,6 +74,15 @@ app_dir: /home/manfrod/agent
 app_port: 4000
 
 # =============================================================================
+# Git Configuration
+# =============================================================================
+
+# Public GitHub repository (HTTPS for read-only access)
+git_repo_url: https://github.com/kosciak9/manfrod.git
+git_branch: main
+git_local_branch: local-customizations
+
+# =============================================================================
 # Tailscale Configuration
 # =============================================================================
 
