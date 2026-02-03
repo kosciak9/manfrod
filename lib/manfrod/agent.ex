@@ -44,9 +44,14 @@ defmodule Manfrod.Agent do
   - create_module: Create entirely new modules
   - eval_code: Evaluate Elixir expressions
   - run_shell: Execute bash commands
+  - set_reminder: Schedule a reminder for yourself at a specific time
+  - list_reminders: See all pending reminders you have scheduled
+  - cancel_reminder: Cancel a pending reminder by its job ID
 
   Use git for version control. Commit your changes with meaningful messages.
-  If something breaks, you can rollback with git.
+  If something breaks, you can rollback with git. Your branch is
+  `local-customisations`, you should commit to that branch and rebase it on
+  top of the upstream `main` branch.
 
   Self-update: Run `./scripts/update.sh` to pull latest code from origin/main,
   recompile, run migrations, and restart. The script handles rollback if
@@ -124,6 +129,34 @@ defmodule Manfrod.Agent do
           timeout: [type: :integer, doc: "Timeout in milliseconds (default: 30000)"]
         ],
         callback: &tool_run_shell/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "set_reminder",
+        description:
+          "Schedule a reminder for yourself at a specific time. You will receive the message as a new conversation.",
+        parameter_schema: [
+          message: [type: :string, required: true, doc: "What to remind yourself about"],
+          at: [
+            type: :string,
+            required: true,
+            doc: "When to trigger (ISO8601 UTC datetime, e.g., '2026-02-04T14:00:00Z')"
+          ]
+        ],
+        callback: &tool_set_reminder/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "list_reminders",
+        description: "List all pending reminders you have scheduled.",
+        parameter_schema: [],
+        callback: &tool_list_reminders/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "cancel_reminder",
+        description: "Cancel a pending reminder by its job ID.",
+        parameter_schema: [
+          id: [type: :integer, required: true, doc: "The job ID of the reminder to cancel"]
+        ],
+        callback: &tool_cancel_reminder/1
       )
     ]
   end
@@ -218,6 +251,63 @@ defmodule Manfrod.Agent do
       {:ok, output, code} -> {:ok, "Exit #{code}:\n#{output}"}
       {:error, reason} -> {:ok, "Shell error: #{reason}"}
     end
+  end
+
+  def tool_set_reminder(%{message: message, at: at_string}) do
+    alias Manfrod.Workers.TriggerWorker
+
+    case DateTime.from_iso8601(at_string) do
+      {:ok, scheduled_at, _offset} ->
+        if DateTime.compare(scheduled_at, DateTime.utc_now()) == :gt do
+          args = %{
+            prompt: "[Reminder] #{message}",
+            trigger_id: "reminder_#{:erlang.phash2({message, scheduled_at})}"
+          }
+
+          case TriggerWorker.new(args, scheduled_at: scheduled_at) |> Oban.insert() do
+            {:ok, job} ->
+              {:ok, "Reminder set (job ##{job.id}) for #{scheduled_at}: #{message}"}
+
+            {:error, reason} ->
+              {:ok, "Failed to set reminder: #{inspect(reason)}"}
+          end
+        else
+          {:ok, "Cannot set reminder in the past. Provide a future datetime."}
+        end
+
+      {:error, _} ->
+        {:ok, "Invalid datetime. Use ISO8601 UTC like '2026-02-04T14:00:00Z'"}
+    end
+  end
+
+  def tool_list_reminders(_args) do
+    import Ecto.Query
+
+    jobs =
+      Oban.Job
+      |> where([j], j.worker == "Manfrod.Workers.TriggerWorker")
+      |> where([j], j.state in ["scheduled", "available"])
+      |> where([j], fragment("?->>'trigger_id' LIKE 'reminder_%'", j.args))
+      |> order_by([j], asc: j.scheduled_at)
+      |> Manfrod.Repo.all()
+
+    if Enum.empty?(jobs) do
+      {:ok, "No pending reminders."}
+    else
+      lines =
+        Enum.map(jobs, fn job ->
+          message = String.replace_prefix(job.args["prompt"], "[Reminder] ", "")
+          "• ##{job.id} at #{job.scheduled_at}: #{message}"
+        end)
+
+      {:ok, "Pending reminders:\n#{Enum.join(lines, "\n")}"}
+    end
+  end
+
+  def tool_cancel_reminder(%{id: job_id}) do
+    # Oban.cancel_job/1 always returns :ok (idempotent)
+    :ok = Oban.cancel_job(job_id)
+    {:ok, "Reminder ##{job_id} cancelled."}
   end
 
   # Server Callbacks
