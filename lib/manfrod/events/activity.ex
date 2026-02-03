@@ -36,6 +36,13 @@ defmodule Manfrod.Events.Activity do
   - `:retrospection_completed` - retrospection finished successfully
   - `:retrospection_failed` - retrospection failed
 
+  LLM:
+  - `:llm_call_started` - LLM request initiated (model, provider, tier, purpose)
+  - `:llm_call_succeeded` - LLM request succeeded (latency, tokens)
+  - `:llm_call_failed` - LLM request failed (error, attempt)
+  - `:llm_retry` - Retrying LLM request (delay, reason)
+  - `:llm_fallback` - Falling back to next model (from/to model)
+
   ## Fields
 
   - `id` - unique event id (UUID)
@@ -72,6 +79,12 @@ defmodule Manfrod.Events.Activity do
           | :retrospection_started
           | :retrospection_completed
           | :retrospection_failed
+          # LLM
+          | :llm_call_started
+          | :llm_call_succeeded
+          | :llm_call_failed
+          | :llm_retry
+          | :llm_fallback
 
   @type t :: %__MODULE__{
           id: String.t(),

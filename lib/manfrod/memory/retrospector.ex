@@ -20,10 +20,7 @@ defmodule Manfrod.Memory.Retrospector do
 
   require Logger
 
-  alias Manfrod.{Events, Memory, Voyage}
-
-  @base_url "https://opencode.ai/zen/v1"
-  @model_id "kimi-k2.5-free"
+  alias Manfrod.{Events, LLM, Memory, Voyage}
 
   # Embed zettelkasten guide at compile time
   @external_resource Path.join(__DIR__, "zettelkasten.md")
@@ -372,7 +369,7 @@ defmodule Manfrod.Memory.Retrospector do
     if iteration > 20 do
       {:error, :max_iterations}
     else
-      case call_llm(messages) do
+      case LLM.generate_text(messages, tools: tools(), purpose: :retrospector) do
         {:ok, response} ->
           case ReqLLM.Response.finish_reason(response) do
             :tool_calls ->
@@ -441,42 +438,6 @@ defmodule Manfrod.Memory.Retrospector do
 
       {:error, _} ->
         "Failed to parse tool arguments"
-    end
-  end
-
-  defp call_llm(messages) do
-    call_llm_with_retry(messages, _retries = 5, _delay = 2000)
-  end
-
-  defp call_llm_with_retry(_messages, 0, _delay) do
-    {:error, :max_retries_exceeded}
-  end
-
-  defp call_llm_with_retry(messages, retries, delay) do
-    api_key = Application.get_env(:manfrod, :zen_api_key)
-    context = ReqLLM.Context.new(messages)
-    model = %{id: @model_id, provider: :openai}
-
-    opts = [
-      base_url: @base_url,
-      api_key: api_key,
-      tools: tools()
-    ]
-
-    case ReqLLM.generate_text(model, context, opts) do
-      {:ok, response} ->
-        {:ok, response}
-
-      {:error, %{status: status}} when status in [429, 500, 502, 503] ->
-        Logger.warning(
-          "Retrospector: rate limited or server error (#{status}), retrying in #{delay}ms..."
-        )
-
-        Process.sleep(delay)
-        call_llm_with_retry(messages, retries - 1, delay * 2)
-
-      {:error, _} = error ->
-        error
     end
   end
 end

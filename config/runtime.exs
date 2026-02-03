@@ -42,6 +42,9 @@ config :manfrod, ManfrodWeb.Endpoint,
 # Zen API (Kimi K2.5)
 config :manfrod, :zen_api_key, env!("ZEN_API_KEY", :string?)
 
+# OpenRouter API
+config :manfrod, :openrouter_api_key, env!("OPENROUTER_API_KEY", :string?)
+
 # Voyage AI (embeddings)
 config :manfrod, :voyage_api_key, env!("VOYAGE_API_KEY", :string?)
 

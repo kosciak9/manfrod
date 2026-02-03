@@ -12,18 +12,7 @@ defmodule Manfrod.Memory.Extractor do
   """
 
   require Logger
-  alias Manfrod.{Events, Memory, Voyage}
-
-  @base_url "https://opencode.ai/zen/v1"
-
-  # Fallback chain: try each model with retries before moving to next
-  @models [
-    "kimi-k2.5-free",
-    "minimax-m2.1-free",
-    "glm-4.7-free"
-  ]
-  @max_retries 3
-  @retry_delay_ms 1000
+  alias Manfrod.{Events, LLM, Memory, Voyage}
 
   @summary_prompt """
   Summarize this conversation in 2-3 sentences. Focus on:
@@ -125,10 +114,11 @@ defmodule Manfrod.Memory.Extractor do
 
   defp generate_summary(conversation_text) do
     prompt = @summary_prompt <> conversation_text
+    messages = [ReqLLM.Context.user(prompt)]
 
-    case call_llm(prompt) do
+    case LLM.generate_text(messages, purpose: :extractor) do
       {:ok, response} ->
-        summary = response |> String.trim()
+        summary = ReqLLM.Response.text(response) |> String.trim()
         {:ok, summary}
 
       error ->
@@ -173,66 +163,15 @@ defmodule Manfrod.Memory.Extractor do
 
   defp extract_facts(conversation_text) do
     prompt = @extraction_prompt <> conversation_text
+    messages = [ReqLLM.Context.user(prompt)]
 
-    case call_llm(prompt) do
-      {:ok, response} -> parse_json(response)
-      error -> error
-    end
-  end
-
-  defp call_llm(prompt) do
-    call_llm_with_fallback(prompt, @models)
-  end
-
-  defp call_llm_with_fallback(_prompt, []) do
-    {:error, :all_models_failed}
-  end
-
-  defp call_llm_with_fallback(prompt, [model_id | remaining_models]) do
-    case call_llm_with_retries(prompt, model_id, @max_retries) do
-      {:ok, _} = success ->
-        success
-
-      {:error, reason} ->
-        Logger.warning(
-          "Model #{model_id} failed after #{@max_retries} retries: #{inspect(reason)}, trying next model"
-        )
-
-        call_llm_with_fallback(prompt, remaining_models)
-    end
-  end
-
-  defp call_llm_with_retries(prompt, model_id, retries_left, attempt \\ 1)
-
-  defp call_llm_with_retries(_prompt, model_id, 0, attempt) do
-    Logger.warning("Model #{model_id} exhausted all #{attempt - 1} retries")
-    {:error, {:retries_exhausted, model_id}}
-  end
-
-  defp call_llm_with_retries(prompt, model_id, retries_left, attempt) do
-    api_key = Application.get_env(:manfrod, :zen_api_key)
-    context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
-    model = %{id: model_id, provider: :openai}
-
-    case ReqLLM.generate_text(model, context, base_url: @base_url, api_key: api_key) do
+    case LLM.generate_text(messages, purpose: :extractor) do
       {:ok, response} ->
-        if attempt > 1 do
-          Logger.info("Model #{model_id} succeeded on attempt #{attempt}")
-        end
+        text = ReqLLM.Response.text(response)
+        parse_json(text)
 
-        {:ok, ReqLLM.Response.text(response)}
-
-      {:error, reason} = error ->
-        Logger.warning(
-          "Model #{model_id} attempt #{attempt}/#{@max_retries} failed: #{inspect(reason)}"
-        )
-
-        if retries_left > 1 do
-          Process.sleep(@retry_delay_ms)
-          call_llm_with_retries(prompt, model_id, retries_left - 1, attempt + 1)
-        else
-          error
-        end
+      error ->
+        error
     end
   end
 

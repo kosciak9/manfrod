@@ -53,4 +53,28 @@ defmodule ManfrodWeb.Layouts do
     </main>
     """
   end
+
+  @doc """
+  Navigation bar component.
+  """
+  attr :current, :atom, required: true
+
+  def nav(assigns) do
+    ~H"""
+    <nav class="flex items-center gap-4">
+      <.nav_link href="/" label="activity" current={@current == :activity} />
+      <.nav_link href="/dashboard" label="dashboard" current={@current == :dashboard} />
+    </nav>
+    """
+  end
+
+  defp nav_link(assigns) do
+    ~H"""
+    <%= if @current do %>
+      <span class="text-blue-400 font-semibold text-base tracking-wide"><%= @label %></span>
+    <% else %>
+      <a href={@href} class="text-zinc-500 hover:text-zinc-300 text-sm transition-colors"><%= @label %></a>
+    <% end %>
+    """
+  end
 end

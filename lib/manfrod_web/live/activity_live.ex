@@ -89,7 +89,7 @@ defmodule ManfrodWeb.ActivityLive do
         <%!-- Navbar --%>
         <header class="sticky top-0 z-10 bg-zinc-950 border-b border-zinc-700 px-4 py-3">
           <div class="flex justify-between items-center">
-            <h1 class="text-blue-400 font-semibold text-base tracking-wide">manfrod activity</h1>
+            <Layouts.nav current={:activity} />
             <div class="flex items-center gap-6">
               <label class="flex items-center gap-2 text-zinc-500 cursor-pointer text-xs hover:text-zinc-300 transition-colors">
                 <input
@@ -205,6 +205,13 @@ defmodule ManfrodWeb.ActivityLive do
        when type in [:extraction_failed, :retrospection_failed],
        do: "text-red-500"
 
+  # LLM events
+  defp type_color_class(%Activity{type: :llm_call_started}), do: "text-indigo-400"
+  defp type_color_class(%Activity{type: :llm_call_succeeded}), do: "text-green-400"
+  defp type_color_class(%Activity{type: :llm_call_failed}), do: "text-red-500"
+  defp type_color_class(%Activity{type: :llm_retry}), do: "text-amber-400"
+  defp type_color_class(%Activity{type: :llm_fallback}), do: "text-orange-400"
+
   defp type_color_class(_), do: "text-zinc-400"
 
   defp format_time(%DateTime{} = dt) do
@@ -233,6 +240,12 @@ defmodule ManfrodWeb.ActivityLive do
   defp format_type(%Activity{type: :retrospection_started}), do: "RETROSPECT:START"
   defp format_type(%Activity{type: :retrospection_completed}), do: "RETROSPECT:DONE"
   defp format_type(%Activity{type: :retrospection_failed}), do: "RETROSPECT:FAIL"
+  # LLM events
+  defp format_type(%Activity{type: :llm_call_started}), do: "LLM:START"
+  defp format_type(%Activity{type: :llm_call_succeeded}), do: "LLM:OK"
+  defp format_type(%Activity{type: :llm_call_failed}), do: "LLM:FAIL"
+  defp format_type(%Activity{type: :llm_retry}), do: "LLM:RETRY"
+  defp format_type(%Activity{type: :llm_fallback}), do: "LLM:FALLBACK"
   defp format_type(%Activity{type: type}), do: String.upcase(to_string(type))
 
   # Format detail (one-line summary)
@@ -264,6 +277,30 @@ defmodule ManfrodWeb.ActivityLive do
 
   defp format_detail(%Activity{type: :idle}), do: "conversation timeout"
 
+  # LLM events
+  defp format_detail(%Activity{type: :llm_call_started, meta: meta}) do
+    tier_badge = if meta[:tier] == :paid, do: "[PAID] ", else: ""
+    "#{tier_badge}#{meta[:provider]}/#{meta[:model]} (#{meta[:purpose]})"
+  end
+
+  defp format_detail(%Activity{type: :llm_call_succeeded, meta: meta}) do
+    tokens = format_tokens(meta[:input_tokens], meta[:output_tokens])
+    tier_badge = if meta[:tier] == :paid, do: "[PAID] ", else: ""
+    "#{tier_badge}#{meta[:provider]}/#{meta[:model]} #{meta[:latency_ms]}ms #{tokens}"
+  end
+
+  defp format_detail(%Activity{type: :llm_call_failed, meta: meta}) do
+    "#{meta[:provider]}/#{meta[:model]} attempt #{meta[:attempt]}: #{meta[:error]}"
+  end
+
+  defp format_detail(%Activity{type: :llm_retry, meta: meta}) do
+    "#{meta[:provider]}/#{meta[:model]} retry ##{meta[:attempt]} in #{meta[:delay_ms]}ms"
+  end
+
+  defp format_detail(%Activity{type: :llm_fallback, meta: meta}) do
+    "#{meta[:from_provider]}/#{meta[:from_model]} → #{meta[:to_provider]}/#{meta[:to_model]}"
+  end
+
   defp format_detail(%Activity{meta: meta}) when map_size(meta) > 0 do
     inspect(meta, limit: 5)
   end
@@ -289,6 +326,10 @@ defmodule ManfrodWeb.ActivityLive do
   defp has_expandable_content?(%Activity{type: :message_received}), do: true
   defp has_expandable_content?(%Activity{type: :responding}), do: true
   defp has_expandable_content?(%Activity{type: :narrating}), do: true
+  # LLM events with details
+  defp has_expandable_content?(%Activity{type: :llm_call_succeeded}), do: true
+  defp has_expandable_content?(%Activity{type: :llm_call_failed}), do: true
+  defp has_expandable_content?(%Activity{type: :llm_fallback}), do: true
   defp has_expandable_content?(_), do: false
 
   # Format expanded content
@@ -341,6 +382,41 @@ defmodule ManfrodWeb.ActivityLive do
     text
   end
 
+  # LLM events
+  defp format_expanded(%Activity{type: :llm_call_succeeded, meta: meta}) do
+    """
+    Provider: #{meta[:provider]}
+    Model: #{meta[:model]}
+    Tier: #{meta[:tier]}
+    Purpose: #{meta[:purpose]}
+    Latency: #{meta[:latency_ms]}ms
+    Input tokens: #{meta[:input_tokens] || "N/A"}
+    Output tokens: #{meta[:output_tokens] || "N/A"}
+    Total tokens: #{meta[:total_tokens] || "N/A"}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :llm_call_failed, meta: meta}) do
+    """
+    Provider: #{meta[:provider]}
+    Model: #{meta[:model]}
+    Tier: #{meta[:tier]}
+    Purpose: #{meta[:purpose]}
+    Attempt: #{meta[:attempt]}
+    Latency: #{meta[:latency_ms]}ms
+    Error: #{meta[:error]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :llm_fallback, meta: meta}) do
+    """
+    From: #{meta[:from_provider]}/#{meta[:from_model]}
+    To: #{meta[:to_provider]}/#{meta[:to_model]}
+    Purpose: #{meta[:purpose]}
+    Reason: #{meta[:reason]}
+    """
+  end
+
   defp format_expanded(%Activity{meta: meta}) do
     inspect(meta, pretty: true, limit: :infinity)
   end
@@ -353,6 +429,9 @@ defmodule ManfrodWeb.ActivityLive do
   end
 
   defp format_json(other), do: inspect(other, pretty: true)
+
+  defp format_tokens(nil, nil), do: ""
+  defp format_tokens(input, output), do: "(#{input || 0}→#{output || 0} tok)"
 
   defp truncate(nil, _max), do: ""
 

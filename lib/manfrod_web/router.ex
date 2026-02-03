@@ -25,6 +25,7 @@ defmodule ManfrodWeb.Router do
 
     live "/", ActivityLive
     live "/chat", ChatLive
+    live "/dashboard", DashboardLive
   end
 
   # LiveDashboard for debugging
