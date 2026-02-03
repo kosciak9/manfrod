@@ -13,7 +13,25 @@
 # - inventory/hosts.yml updated to use kosciak user
 #
 # Run with:
+#   # Full infrastructure + deploy
 #   ansible-playbook playbooks/site.yml --vault-password-file .vault_pass
+#
+#   # Code deploy only (fast)
+#   ansible-playbook playbooks/site.yml --vault-password-file .vault_pass --tags deploy
+#
+#   # Infrastructure only (skip app deploy)
+#   ansible-playbook playbooks/site.yml --vault-password-file .vault_pass --skip-tags deploy
+#
+# Available tags:
+#   system    - hostname, timezone, base packages
+#   network   - WiFi, networkd, resolved
+#   podman    - container runtime setup
+#   tun       - TUN module for Tailscale
+#   paradedb  - database container
+#   elixir    - hex, rebar toolchain
+#   deploy    - git, deps, compile, migrate, app service
+#   tailscale - VPN setup
+#   firewall  - nftables rules
 
 - name: Configure Manfrod server
   hosts: configured
@@ -31,6 +49,7 @@
         mode: "0644"
       become: true
       notify: Apply hostname
+      tags: [system]
 
     - name: Update /etc/hosts with hostname
       ansible.builtin.lineinfile:
@@ -39,11 +58,13 @@
         line: "127.0.1.1\t{{ hostname }}"
         insertafter: '^127\.0\.0\.1'
       become: true
+      tags: [system]
 
     - name: Set timezone
       community.general.timezone:
         name: "{{ timezone }}"
       become: true
+      tags: [system]
 
     - name: Install base packages
       community.general.pacman:
@@ -51,6 +72,7 @@
         state: present
         update_cache: true
       become: true
+      tags: [system]
 
     # =========================================================================
     # WiFi Configuration (wpa_supplicant)
@@ -63,6 +85,7 @@
           - wireless-regdb
         state: present
       become: true
+      tags: [network]
 
     - name: Create wpa_supplicant configuration directory
       ansible.builtin.file:
@@ -70,6 +93,7 @@
         state: directory
         mode: '0755'
       become: true
+      tags: [network]
 
     - name: Configure wpa_supplicant for wlan0
       ansible.builtin.copy:
@@ -88,6 +112,7 @@
         mode: '0600'
       become: true
       notify: Restart wpa_supplicant
+      tags: [network]
 
     - name: Enable and start wpa_supplicant for wlan0
       ansible.builtin.systemd:
@@ -95,6 +120,7 @@
         state: started
         enabled: true
       become: true
+      tags: [network]
 
     - name: Create networkd config for wlan0
       ansible.builtin.copy:
@@ -108,6 +134,7 @@
         mode: "0644"
       become: true
       notify: Restart networkd
+      tags: [network]
 
     - name: Create networkd config for ethernet
       ansible.builtin.copy:
@@ -121,6 +148,7 @@
         mode: "0644"
       become: true
       notify: Restart networkd
+      tags: [network]
 
     - name: Link resolv.conf to systemd-resolved
       ansible.builtin.file:
@@ -129,6 +157,7 @@
         state: link
         force: true
       become: true
+      tags: [network]
 
     - name: Enable systemd-networkd
       ansible.builtin.systemd:
@@ -136,6 +165,7 @@
         state: started
         enabled: true
       become: true
+      tags: [network]
 
     - name: Enable systemd-resolved
       ansible.builtin.systemd:
@@ -143,6 +173,7 @@
         state: started
         enabled: true
       become: true
+      tags: [network]
 
     # =========================================================================
     # Podman Installation
@@ -154,12 +185,14 @@
         state: present
         update_cache: true
       become: true
+      tags: [podman]
 
     - name: Install shadow package (for newuidmap/newgidmap)
       community.general.pacman:
         name: shadow
         state: present
       become: true
+      tags: [podman]
 
     - name: Set capabilities on newuidmap
       community.general.capabilities:
@@ -167,14 +200,15 @@
         capability: cap_setuid+ep
         state: present
       become: true
+      tags: [podman]
 
     - name: Set capabilities on newgidmap
       community.general.capabilities:
         path: /usr/bin/newgidmap
         capability: cap_setgid+ep
         state: present
-
       become: true
+      tags: [podman]
 
     - name: Configure subuid for app user
       ansible.builtin.lineinfile:
@@ -184,6 +218,7 @@
         create: true
         mode: "0644"
       become: true
+      tags: [podman]
 
     - name: Configure subgid for app user
       ansible.builtin.lineinfile:
@@ -193,12 +228,14 @@
         create: true
         mode: "0644"
       become: true
+      tags: [podman]
 
     - name: Enable lingering for manfrod user (required for user services without login)
       ansible.builtin.command: loginctl enable-linger {{ app_user }}
       become: true
       register: linger_result
       changed_when: linger_result.rc == 0
+      tags: [podman]
 
     # =========================================================================
     # TUN Module (required for Tailscale)
@@ -209,6 +246,7 @@
         name: tun
         state: present
       become: true
+      tags: [tun]
 
     - name: Persist TUN module loading at boot
       ansible.builtin.copy:
@@ -216,6 +254,7 @@
         dest: /etc/modules-load.d/tun.conf
         mode: "0644"
       become: true
+      tags: [tun]
 
     # =========================================================================
     # ParadeDB Container Setup
@@ -229,6 +268,7 @@
         group: root
         mode: "0755"
       become: true
+      tags: [paradedb]
 
     - name: Deploy ParadeDB environment file
       ansible.builtin.template:
@@ -239,6 +279,7 @@
         mode: "0600"
       become: true
       notify: Restart paradedb
+      tags: [paradedb]
 
     - name: Create ParadeDB podman volume
       containers.podman.podman_volume:
@@ -246,6 +287,7 @@
         state: present
       become: true
       become_user: "{{ app_user }}"
+      tags: [paradedb]
 
     - name: Deploy ParadeDB systemd service
       ansible.builtin.template:
@@ -254,6 +296,7 @@
         mode: "0644"
       become: true
       notify: Restart paradedb
+      tags: [paradedb]
 
     - name: Enable and start ParadeDB service
       ansible.builtin.systemd:
@@ -262,6 +305,7 @@
         enabled: true
         daemon_reload: true
       become: true
+      tags: [paradedb]
 
     # =========================================================================
     # Elixir Toolchain Setup
@@ -273,6 +317,7 @@
       become_user: "{{ app_user }}"
       register: hex_install
       changed_when: "'* creating' in hex_install.stdout"
+      tags: [elixir]
 
     - name: Install Rebar build tool
       ansible.builtin.command: mix local.rebar --force
@@ -280,10 +325,19 @@
       become_user: "{{ app_user }}"
       register: rebar_install
       changed_when: "'* creating' in rebar_install.stdout"
+      tags: [elixir]
 
     # =========================================================================
     # Manfrod Application Deployment
     # =========================================================================
+
+    - name: Pre-flight - verify ParadeDB is running
+      ansible.builtin.command: systemctl is-active paradedb
+      changed_when: false
+      register: paradedb_check
+      failed_when: paradedb_check.rc != 0
+      become: true
+      tags: [deploy]
 
     # =========================================================================
     # Git Repository Setup
@@ -293,6 +347,7 @@
       ansible.builtin.stat:
         path: "{{ app_dir }}/.git"
       register: git_repo
+      tags: [deploy]
 
     - name: Clone repository (first deploy)
       ansible.builtin.git:
@@ -302,6 +357,7 @@
       become: true
       become_user: "{{ app_user }}"
       when: not git_repo.stat.exists
+      tags: [deploy]
 
     - name: Create local-customizations branch (first deploy)
       ansible.builtin.command: git checkout -b {{ git_local_branch }}
@@ -312,6 +368,7 @@
       when: not git_repo.stat.exists
       register: branch_create
       changed_when: branch_create.rc == 0
+      tags: [deploy]
 
     - name: Configure git user name for agent
       ansible.builtin.command: git config user.name "Manfrod Agent"
@@ -320,6 +377,7 @@
       become: true
       become_user: "{{ app_user }}"
       changed_when: false
+      tags: [deploy]
 
     - name: Configure git user email for agent
       ansible.builtin.command: git config user.email "agent@manfrod.local"
@@ -328,6 +386,7 @@
       become: true
       become_user: "{{ app_user }}"
       changed_when: false
+      tags: [deploy]
 
     - name: Fetch upstream changes (subsequent deploys)
       ansible.builtin.command: git fetch origin
@@ -337,6 +396,7 @@
       become_user: "{{ app_user }}"
       when: git_repo.stat.exists
       changed_when: false
+      tags: [deploy]
 
     - name: Rebase local-customizations onto origin/main (subsequent deploys)
       ansible.builtin.command: git rebase origin/{{ git_branch }}
@@ -349,6 +409,7 @@
       failed_when: false
       changed_when: rebase_result.rc == 0 and 'is up to date' not in rebase_result.stdout
       notify: Restart manfrod
+      tags: [deploy]
 
     - name: Alert if rebase has conflicts
       ansible.builtin.fail:
@@ -360,6 +421,7 @@
             git rebase --continue
           Or abort with: git rebase --abort
       when: git_repo.stat.exists and rebase_result.rc != 0
+      tags: [deploy]
 
     - name: Deploy .env file
       ansible.builtin.template:
@@ -370,6 +432,7 @@
         mode: "0600"
       become: true
       notify: Restart manfrod
+      tags: [deploy]
 
     - name: Install Elixir dependencies
       ansible.builtin.command: mix deps.get
@@ -379,6 +442,7 @@
       become_user: "{{ app_user }}"
       register: deps_get
       changed_when: "'New' in deps_get.stdout or 'Resolving' in deps_get.stdout"
+      tags: [deploy]
 
     - name: Compile application
       ansible.builtin.command: mix compile
@@ -388,6 +452,7 @@
       become_user: "{{ app_user }}"
       register: compile_result
       changed_when: "'Compiling' in compile_result.stdout"
+      tags: [deploy]
 
     - name: Run database migrations
       ansible.builtin.command: mix ecto.migrate
@@ -397,6 +462,7 @@
       become_user: "{{ app_user }}"
       register: migrate_result
       changed_when: "'migrated' in migrate_result.stdout"
+      tags: [deploy]
 
     - name: Deploy Manfrod systemd service
       ansible.builtin.template:
@@ -405,6 +471,7 @@
         mode: "0644"
       become: true
       notify: Restart manfrod
+      tags: [deploy]
 
     - name: Enable and start Manfrod service
       ansible.builtin.systemd:
@@ -413,6 +480,7 @@
         enabled: true
         daemon_reload: true
       become: true
+      tags: [deploy]
 
     # =========================================================================
     # Tailscale Installation and Configuration
@@ -423,6 +491,7 @@
         name: tailscale
         state: present
       become: true
+      tags: [tailscale]
 
     - name: Enable and start tailscaled service
       ansible.builtin.systemd:
@@ -430,6 +499,7 @@
         state: started
         enabled: true
       become: true
+      tags: [tailscale]
 
     - name: Authenticate Tailscale with auth key
       ansible.builtin.command: >
@@ -441,22 +511,26 @@
       changed_when: "'Success' in tailscale_up.stdout or tailscale_up.rc == 0"
       failed_when: tailscale_up.rc != 0 and 'already' not in tailscale_up.stderr
       become: true
+      tags: [tailscale]
 
     - name: Get Tailscale status
       ansible.builtin.command: tailscale status
       register: tailscale_status
       changed_when: false
       become: true
+      tags: [tailscale]
 
     - name: Display Tailscale status
       ansible.builtin.debug:
         var: tailscale_status.stdout_lines
+      tags: [tailscale]
 
     - name: Get Tailscale IP
       ansible.builtin.command: tailscale ip -4
       register: tailscale_ip
       changed_when: false
       become: true
+      tags: [tailscale]
 
     # =========================================================================
     # Firewall Configuration (optional - nftables)
@@ -467,6 +541,7 @@
         name: nftables
         state: present
       become: true
+      tags: [firewall]
 
     - name: Create nftables configuration
       ansible.builtin.copy:
@@ -512,6 +587,7 @@
         mode: "0644"
       become: true
       notify: Restart nftables
+      tags: [firewall]
 
     - name: Enable nftables service
       ansible.builtin.systemd:
@@ -519,6 +595,7 @@
         state: started
         enabled: true
       become: true
+      tags: [firewall]
 
   handlers:
     - name: Apply hostname
