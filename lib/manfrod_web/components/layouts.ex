@@ -15,6 +15,7 @@ defmodule ManfrodWeb.Layouts do
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="csrf-token" content={Phoenix.Controller.get_csrf_token()} />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤵</text></svg>" />
         <title>Manfrod</title>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -61,7 +62,7 @@ defmodule ManfrodWeb.Layouts do
 
   def nav(assigns) do
     ~H"""
-    <nav class="flex items-center gap-4">
+    <nav class="flex justify-center items-center gap-4 w-full font-mono px-2 py-4">
       <.nav_link href="/" label="activity" current={@current == :activity} />
       <.nav_link href="/dashboard" label="dashboard" current={@current == :dashboard} />
     </nav>
@@ -71,9 +72,10 @@ defmodule ManfrodWeb.Layouts do
   defp nav_link(assigns) do
     ~H"""
     <%= if @current do %>
-      <span class="text-blue-400 font-semibold text-base tracking-wide"><%= @label %></span>
+      <span class="text-blue-400 decoration-solid"><%= @label %></span>
     <% else %>
-      <a href={@href} class="text-zinc-500 hover:text-zinc-300 text-sm transition-colors"><%= @label %></a>
+      <.link navigate={@href} class="text-zinc-500 hover:text-zinc-300
+      transition-colors"><%= @label %></.link>
     <% end %>
     """
   end

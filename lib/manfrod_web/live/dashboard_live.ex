@@ -24,10 +24,10 @@ defmodule ManfrodWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
+      <Layouts.nav current={:dashboard} />
       <div class="min-h-screen bg-zinc-900 text-zinc-200 font-mono text-sm p-6">
-        <header class="mb-8">
-          <Layouts.nav current={:dashboard} />
-          <p class="text-zinc-500 text-xs mt-2">Last 7 days</p>
+        <header class="text-center py-4">
+          Last 7 days
         </header>
 
         <%!-- Summary Cards --%>

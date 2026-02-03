@@ -85,11 +85,11 @@ defmodule ManfrodWeb.ActivityLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
+      <Layouts.nav current={:activity} />
       <div class="h-screen flex flex-col font-mono text-sm bg-zinc-900 text-zinc-200">
         <%!-- Navbar --%>
         <header class="sticky top-0 z-10 bg-zinc-950 border-b border-zinc-700 px-4 py-3">
-          <div class="flex justify-between items-center">
-            <Layouts.nav current={:activity} />
+          <div class="flex justify-end items-center">
             <div class="flex items-center gap-6">
               <label class="flex items-center gap-2 text-zinc-500 cursor-pointer text-xs hover:text-zinc-300 transition-colors">
                 <input
