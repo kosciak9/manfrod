@@ -14,7 +14,15 @@ defmodule Manfrod.Memory do
 
   alias Manfrod.Events
   alias Manfrod.Repo
-  alias Manfrod.Memory.{Conversation, Message, Node, Link}
+  alias Manfrod.Memory.{Conversation, Message, Node, Link, QueryExpander}
+
+  # Relevance threshold for filtering search results (cosine distance)
+  # Lower = more strict, higher = more permissive
+  # Cosine distance ranges from 0 (identical) to 2 (opposite)
+  @relevance_threshold 0.4
+
+  # RRF constant (k) - higher values give more weight to lower-ranked results
+  @rrf_k 60
 
   # --- Messages ---
 
@@ -291,50 +299,123 @@ defmodule Manfrod.Memory do
     |> Repo.all()
   end
 
-  # --- Hybrid Search ---
+  # --- Hybrid Search with Query Expansion ---
 
   @doc """
-  Hybrid retrieval: vector + BM25 in parallel, then expand 1-hop links.
+  Hybrid retrieval with query expansion.
+
+  1. Expands the query into multiple search queries using LLM
+  2. Runs vector + BM25 search for each expanded query in parallel
+  3. Merges results using Reciprocal Rank Fusion (RRF)
+  4. Filters by relevance threshold
+  5. Expands with 1-hop links
+
+  Returns `{:ok, nodes}` where nodes is a list of Node structs.
+
+  ## Options
+
+    * `:limit` - Maximum number of results (default: 10)
+    * `:expand_query` - Whether to use query expansion (default: true)
   """
   def search(query_text, opts \\ []) do
     limit = Keyword.get(opts, :limit, 10)
+    expand_query? = Keyword.get(opts, :expand_query, true)
 
-    with {:ok, embedding} <- Manfrod.Voyage.embed_query(query_text) do
-      [vector_results, bm25_results] =
-        Task.await_many(
-          [
-            Task.async(fn -> vector_search(embedding, limit) end),
-            Task.async(fn -> bm25_search(query_text, limit) end)
-          ],
-          :infinity
-        )
+    # Step 1: Query expansion (always succeeds with fallback to original)
+    {:ok, queries} =
+      if expand_query? do
+        QueryExpander.expand(query_text)
+      else
+        {:ok, [query_text]}
+      end
 
-      merged =
-        (vector_results ++ bm25_results)
-        |> Enum.uniq_by(& &1.id)
-        |> Enum.take(limit)
+    # Step 2: Parallel search for each query
+    search_tasks =
+      Enum.flat_map(queries, fn query ->
+        [
+          Task.async(fn -> {:vector, query, search_vector(query, limit)} end),
+          Task.async(fn -> {:bm25, query, search_bm25(query, limit)} end)
+        ]
+      end)
 
-      results = expand_with_links(merged, limit * 2)
+    search_results = Task.await_many(search_tasks, :infinity)
 
-      Events.broadcast(:memory_searched, %{
-        source: :memory,
-        meta: %{
-          query_preview: String.slice(query_text, 0, 100),
-          result_count: length(results)
-        }
-      })
+    # Step 3: Collect results by type and merge with RRF
+    vector_results =
+      search_results
+      |> Enum.filter(fn {type, _, _} -> type == :vector end)
+      |> Enum.flat_map(fn {_, _, results} -> results end)
 
-      {:ok, results}
+    bm25_results =
+      search_results
+      |> Enum.filter(fn {type, _, _} -> type == :bm25 end)
+      |> Enum.flat_map(fn {_, _, results} -> results end)
+
+    # RRF merge - combine vector and BM25 results
+    merged = rrf_merge([vector_results, bm25_results])
+
+    # Step 4: Filter by relevance threshold
+    # Only keep nodes where at least one search returned them with good distance
+    min_distances = compute_min_distances(vector_results)
+
+    filtered =
+      merged
+      |> Enum.filter(fn node ->
+        case Map.get(min_distances, node.id) do
+          # BM25-only results pass through
+          nil -> true
+          distance -> distance <= @relevance_threshold
+        end
+      end)
+      |> Enum.take(limit)
+
+    # Step 5: Expand with 1-hop links
+    results = expand_with_links(filtered, limit * 2)
+
+    Events.broadcast(:memory_searched, %{
+      source: :memory,
+      meta: %{
+        query_preview: String.slice(query_text, 0, 100),
+        expanded_queries: length(queries),
+        result_count: length(results)
+      }
+    })
+
+    {:ok, results}
+  end
+
+  @doc """
+  Search using only vector similarity (no query expansion).
+  Returns `[{node, distance}]` tuples sorted by distance ascending.
+  """
+  def search_vector(query_text, limit \\ 10) do
+    case Manfrod.Voyage.embed_query(query_text) do
+      {:ok, embedding} ->
+        vector_search_with_distance(embedding, limit)
+
+      {:error, _} ->
+        []
     end
   end
 
-  defp vector_search(embedding, limit) do
+  @doc """
+  Search using only BM25 keyword matching.
+  Returns list of nodes sorted by BM25 score descending.
+  """
+  def search_bm25(query_text, limit \\ 10) do
+    bm25_search(query_text, limit)
+  end
+
+  # Vector search returning {node, distance} tuples
+  defp vector_search_with_distance(embedding, limit) do
     vec = Pgvector.new(embedding)
 
-    Node
-    |> where([n], not is_nil(n.embedding))
-    |> order_by([n], cosine_distance(n.embedding, ^vec))
-    |> limit(^limit)
+    from(n in Node,
+      where: not is_nil(n.embedding),
+      select: {n, cosine_distance(n.embedding, ^vec)},
+      order_by: cosine_distance(n.embedding, ^vec),
+      limit: ^limit
+    )
     |> Repo.all()
   end
 
@@ -348,6 +429,56 @@ defmodule Manfrod.Memory do
     |> Repo.all()
     |> Enum.map(fn {node, _score} -> node end)
   end
+
+  # Compute minimum distance per node from vector results
+  defp compute_min_distances(vector_results) do
+    vector_results
+    |> Enum.reduce(%{}, fn {node, distance}, acc ->
+      Map.update(acc, node.id, distance, &min(&1, distance))
+    end)
+  end
+
+  @doc """
+  Reciprocal Rank Fusion - merges multiple ranked lists into one.
+
+  Each input list can be either:
+  - List of nodes (from BM25)
+  - List of {node, score} tuples (from vector search)
+
+  Returns a list of nodes sorted by combined RRF score.
+  """
+  def rrf_merge(ranked_lists) do
+    # Normalize all lists to just nodes while tracking ranks
+    ranked_lists
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {list, _list_idx} ->
+      list
+      # Ranks start at 1
+      |> Enum.with_index(1)
+      |> Enum.map(fn {item, rank} ->
+        node = normalize_to_node(item)
+        {node.id, node, rank}
+      end)
+    end)
+    |> Enum.group_by(fn {id, _node, _rank} -> id end)
+    |> Enum.map(fn {_id, entries} ->
+      # Get the node from first entry
+      {_, node, _} = hd(entries)
+
+      # Sum RRF scores across all lists
+      rrf_score =
+        entries
+        |> Enum.map(fn {_, _, rank} -> 1.0 / (@rrf_k + rank) end)
+        |> Enum.sum()
+
+      {node, rrf_score}
+    end)
+    |> Enum.sort_by(fn {_node, score} -> score end, :desc)
+    |> Enum.map(fn {node, _score} -> node end)
+  end
+
+  defp normalize_to_node({node, _score}), do: node
+  defp normalize_to_node(node), do: node
 
   defp expand_with_links([], _max), do: []
 
@@ -371,10 +502,25 @@ defmodule Manfrod.Memory do
 
   # --- Context Building ---
 
+  @doc """
+  Build memory context string for injection into prompts.
+
+  Formats nodes with their UUIDs for reference. The LLM can use
+  `recall_memory` to search for more memories or `get_memory` to
+  fetch a specific node by ID.
+  """
   def build_context([]), do: ""
 
   def build_context(nodes) do
-    items = Enum.map_join(nodes, "\n- ", & &1.content)
-    "Relevant memories:\n- #{items}"
+    items =
+      nodes
+      |> Enum.map(fn node -> "- [#{node.id}] #{node.content}" end)
+      |> Enum.join("\n")
+
+    """
+    Relevant memories (use recall_memory to search for more, get_memory to fetch by ID):
+    #{items}
+    """
+    |> String.trim()
   end
 end

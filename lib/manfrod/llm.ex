@@ -83,6 +83,99 @@ defmodule Manfrod.LLM do
     call_with_fallback(messages, tools, purpose, @fallback_chain)
   end
 
+  @doc """
+  Direct call to a specific model without fallback chain.
+
+  Useful for lightweight, fast calls where fallback is not needed (e.g., query expansion).
+  Uses shorter timeout (30s) and no retries.
+
+  ## Arguments
+
+    * `model_id` - The model identifier (e.g., "liquid/lfm-2.5-1.2b-instruct:free")
+    * `messages` - List of message maps with :role and :content
+    * `opts` - Options:
+      * `:provider` - Provider key (:openrouter or :zen), defaults to :openrouter
+      * `:purpose` - Atom for telemetry (defaults to :simple)
+      * `:timeout_ms` - Request timeout in ms (defaults to 30_000)
+
+  ## Returns
+
+    * `{:ok, String.t()}` - The generated text content
+    * `{:error, term()}` - Error details
+  """
+  @spec generate_simple(String.t(), list(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def generate_simple(model_id, messages, opts \\ []) do
+    provider_key = Keyword.get(opts, :provider, :openrouter)
+    purpose = Keyword.get(opts, :purpose, :simple)
+    timeout_ms = Keyword.get(opts, :timeout_ms, 30_000)
+
+    provider = Map.fetch!(@providers, provider_key)
+    api_key = Application.get_env(:manfrod, provider.api_key_config)
+
+    context = ReqLLM.Context.new(messages)
+    model = %{id: model_id, provider: :openai}
+
+    start_time = System.monotonic_time(:millisecond)
+
+    Events.broadcast(:llm_call_started, %{
+      source: :llm,
+      meta: %{
+        model: model_id,
+        provider: provider_key,
+        tier: :free,
+        purpose: purpose,
+        attempt: 1
+      }
+    })
+
+    result =
+      ReqLLM.generate_text(model, context,
+        base_url: provider.base_url,
+        api_key: api_key,
+        receive_timeout: timeout_ms,
+        req_http_options: [retry: false]
+      )
+
+    latency_ms = System.monotonic_time(:millisecond) - start_time
+
+    case result do
+      {:ok, response} ->
+        usage = ReqLLM.Response.usage(response) || %{}
+
+        Events.broadcast(:llm_call_succeeded, %{
+          source: :llm,
+          meta: %{
+            model: model_id,
+            provider: provider_key,
+            tier: :free,
+            purpose: purpose,
+            latency_ms: latency_ms,
+            input_tokens: usage[:input_tokens],
+            output_tokens: usage[:output_tokens],
+            total_tokens: usage[:total_tokens]
+          }
+        })
+
+        {:ok, ReqLLM.Response.text(response)}
+
+      {:error, reason} = error ->
+        Events.broadcast(:llm_call_failed, %{
+          source: :llm,
+          meta: %{
+            model: model_id,
+            provider: provider_key,
+            tier: :free,
+            purpose: purpose,
+            attempt: 1,
+            error: format_error(reason),
+            latency_ms: latency_ms
+          }
+        })
+
+        error
+    end
+  end
+
   # Fallback chain traversal
 
   defp call_with_fallback(_messages, _tools, _purpose, []) do

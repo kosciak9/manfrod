@@ -1,0 +1,105 @@
+defmodule Manfrod.Memory.QueryExpander do
+  @moduledoc """
+  Expands user queries into multiple search queries for improved retrieval.
+
+  Uses a small, fast LLM (Liquid LFM 1.2B) to generate query variations that
+  capture different phrasings and semantic angles of the original query.
+  This improves recall in semantic search by covering vocabulary mismatches
+  between how users phrase queries and how memories are stored.
+
+  ## Example
+
+      iex> QueryExpander.expand("what was that project?")
+      {:ok, [
+        "what was that project?",
+        "previous project we discussed",
+        "project mentioned in earlier conversation"
+      ]}
+  """
+
+  alias Manfrod.LLM
+
+  @model "liquid/lfm-2.5-1.2b-instruct:free"
+
+  @expansion_prompt """
+  Rewrite the following query into 3 different search queries that would help find relevant information in a personal knowledge base. Include the original query as the first item.
+
+  Rules:
+  - Each query should capture a different angle or phrasing
+  - Keep queries concise (under 15 words each)
+  - Focus on semantic variations, not just synonyms
+  - Output ONLY a JSON array of strings, nothing else
+
+  Query: {{QUERY}}
+
+  Output:
+  """
+
+  @doc """
+  Expands a query into multiple search queries using LLM.
+
+  Returns `{:ok, [query1, query2, query3]}` on success.
+  Returns `{:error, reason}` on failure, with fallback to original query.
+
+  ## Options
+
+    * `:timeout_ms` - Request timeout (default: 30_000)
+  """
+  @spec expand(String.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
+  def expand(query, opts \\ []) do
+    timeout_ms = Keyword.get(opts, :timeout_ms, 30_000)
+
+    prompt = String.replace(@expansion_prompt, "{{QUERY}}", query)
+
+    messages = [
+      %{role: "user", content: prompt}
+    ]
+
+    case LLM.generate_simple(@model, messages, purpose: :query_expansion, timeout_ms: timeout_ms) do
+      {:ok, response} ->
+        parse_expansion(response, query)
+
+      {:error, _reason} ->
+        # Fallback: return original query on error
+        {:ok, [query]}
+    end
+  end
+
+  # Parse the LLM response into a list of queries
+  defp parse_expansion(response, original_query) do
+    # Clean up response - remove markdown code blocks if present
+    cleaned =
+      response
+      |> String.trim()
+      |> String.replace(~r/^```json\s*/, "")
+      |> String.replace(~r/\s*```$/, "")
+      |> String.trim()
+
+    case Jason.decode(cleaned) do
+      {:ok, queries} when is_list(queries) ->
+        # Ensure original query is first and all items are strings
+        queries =
+          queries
+          |> Enum.filter(&is_binary/1)
+          |> Enum.take(5)
+
+        # Always include original query first
+        queries =
+          if original_query in queries do
+            [original_query | Enum.reject(queries, &(&1 == original_query))]
+          else
+            [original_query | queries]
+          end
+
+        {:ok, Enum.take(queries, 3)}
+
+      {:ok, _} ->
+        # Not a list, fallback
+        {:ok, [original_query]}
+
+      {:error, _} ->
+        # JSON parse failed, fallback
+        {:ok, [original_query]}
+    end
+  end
+end

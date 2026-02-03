@@ -149,21 +149,17 @@ defmodule Manfrod.Memory.Retrospector do
 
   def tool_search(%{query: query} = args) do
     limit = Map.get(args, :limit, 5)
+    {:ok, nodes} = Memory.search(query, limit: limit)
 
-    case Memory.search(query, limit: limit) do
-      {:ok, nodes} when nodes == [] ->
-        {:ok, "No matching nodes found."}
+    if Enum.empty?(nodes) do
+      {:ok, "No matching nodes found."}
+    else
+      result =
+        nodes
+        |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
+        |> Enum.join("\n")
 
-      {:ok, nodes} ->
-        result =
-          nodes
-          |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
-          |> Enum.join("\n")
-
-        {:ok, "Found #{length(nodes)} nodes:\n#{result}"}
-
-      {:error, reason} ->
-        {:ok, "Search failed: #{inspect(reason)}"}
+      {:ok, "Found #{length(nodes)} nodes:\n#{result}"}
     end
   end
 

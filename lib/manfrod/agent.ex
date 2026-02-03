@@ -47,6 +47,12 @@ defmodule Manfrod.Agent do
   - set_reminder: Schedule a reminder for yourself at a specific time
   - list_reminders: See all pending reminders you have scheduled
   - cancel_reminder: Cancel a pending reminder by its job ID
+  - recall_memory: Search your memory for relevant information not in context
+  - get_memory: Fetch a specific memory by UUID, including linked memories
+
+  Memory context is injected with each message, showing relevant memories with
+  their UUIDs. Use recall_memory to search for more, get_memory to explore
+  specific memories and their connections.
 
   Use git for version control. Commit your changes with meaningful messages.
   If something breaks, you can rollback with git. Your branch is
@@ -157,6 +163,32 @@ defmodule Manfrod.Agent do
           id: [type: :integer, required: true, doc: "The job ID of the reminder to cancel"]
         ],
         callback: &tool_cancel_reminder/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "recall_memory",
+        description:
+          "Search your memory for relevant information. Use this when you need to recall facts, preferences, or context not in the initial memory context.",
+        parameter_schema: [
+          query: [
+            type: :string,
+            required: true,
+            doc: "Search query - what you want to remember"
+          ]
+        ],
+        callback: &tool_recall_memory/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "get_memory",
+        description:
+          "Fetch a specific memory by its UUID. Also returns linked memories for context. Use when you have a memory ID from the context and want more details or related memories.",
+        parameter_schema: [
+          id: [
+            type: :string,
+            required: true,
+            doc: "UUID of the memory to fetch (e.g., '550e8400-e29b-41d4-a716-446655440000')"
+          ]
+        ],
+        callback: &tool_get_memory/1
       )
     ]
   end
@@ -308,6 +340,58 @@ defmodule Manfrod.Agent do
     # Oban.cancel_job/1 always returns :ok (idempotent)
     :ok = Oban.cancel_job(job_id)
     {:ok, "Reminder ##{job_id} cancelled."}
+  end
+
+  def tool_recall_memory(%{query: query}) do
+    {:ok, nodes} = Memory.search(query, limit: 10)
+
+    if Enum.empty?(nodes) do
+      {:ok, "No relevant memories found for: #{query}"}
+    else
+      lines =
+        Enum.map(nodes, fn node ->
+          linked = Memory.get_node_links(node.id)
+          linked_ids = Enum.map(linked, & &1.id) |> Enum.join(", ")
+
+          if linked_ids == "" do
+            "- [#{node.id}] #{node.content}"
+          else
+            "- [#{node.id}] #{node.content}\n  Linked to: #{linked_ids}"
+          end
+        end)
+
+      {:ok, "Found #{length(nodes)} memories:\n#{Enum.join(lines, "\n")}"}
+    end
+  end
+
+  def tool_get_memory(%{id: id}) do
+    case Memory.get_node(id) do
+      nil ->
+        {:ok, "Memory not found: #{id}"}
+
+      node ->
+        linked_nodes = Memory.get_node_links(node.id)
+
+        linked_content =
+          if Enum.empty?(linked_nodes) do
+            "No linked memories."
+          else
+            lines =
+              Enum.map(linked_nodes, fn n ->
+                "- [#{n.id}] #{n.content}"
+              end)
+
+            "Linked memories:\n#{Enum.join(lines, "\n")}"
+          end
+
+        {:ok,
+         """
+         Memory [#{node.id}]:
+         #{node.content}
+
+         #{linked_content}
+         """}
+    end
   end
 
   # Server Callbacks
@@ -633,7 +717,7 @@ defmodule Manfrod.Agent do
     soul = Memory.get_soul()
 
     relevant =
-      case Memory.search(query, limit: 5) do
+      case Memory.search(query, limit: 10) do
         {:ok, nodes} -> nodes
         _ -> []
       end
