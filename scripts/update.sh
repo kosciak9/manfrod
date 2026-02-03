@@ -88,40 +88,11 @@ echo ">>> Marking update in database..."
 mix run -e "Manfrod.Deployment.mark_updating(\"$NEW_SHA\")"
 echo ""
 
-# 7. Restart service
-# Use a background script that:
-#   1. Waits a moment for this script to return output to the agent
-#   2. Stops the service and waits for port to be free
-#   3. Starts the service
-echo ">>> Scheduling service restart..."
-echo "The agent will die and come back with restored context."
-
-# Get the port from environment or use default
-PORT="${PORT:-4000}"
-
-# Create and run a detached restart script
-sudo bash -c "
-  # Wait a moment for the update script to finish and return
-  sleep 1
-  
-  # Stop the service
-  systemctl stop manfrod
-  
-  # Wait for port to be released (max 30 seconds)
-  for i in {1..30}; do
-    if ! ss -tlnp | grep -q ':$PORT '; then
-      break
-    fi
-    sleep 1
-  done
-  
-  # Start the service
-  systemctl start manfrod
-" &>/dev/null &
-
+# 7. Done - agent must explicitly restart
 echo ""
-echo "=== Update complete ==="
+echo "=== Update compiled successfully ==="
 echo "Finished at: $(date)"
-echo ""
 echo "New commit: $NEW_SHA"
-echo "Restart initiated - agent will reconnect shortly."
+echo ""
+echo "NEXT STEP: Run 'sudo systemctl restart manfrod' to apply the update."
+echo "The agent will restart and restore conversation context automatically."

@@ -59,10 +59,13 @@ defmodule Manfrod.Agent do
   `local-customisations`, you should commit to that branch and rebase it on
   top of the upstream `main` branch.
 
-  Self-update: Run `./scripts/update.sh` to pull latest code from origin/main,
-  recompile, run migrations, and restart. The script handles rollback if
-  compilation fails. After restart, you'll lose this conversation context
-  but your memory persists in the database.
+  Self-update (two-phase process):
+  1. Run `./scripts/update.sh` - pulls code, compiles, runs migrations.
+     If compilation fails, the script rolls back automatically.
+     On success, it prints "Update compiled successfully" and the next step.
+  2. Tell the user the update is ready, then run `sudo systemctl restart manfrod`.
+     You will die and restart with the new code. Your conversation context
+     will be restored from the database automatically.
   """
 
   # Tool definitions are created at runtime to avoid compile-time validation issues
