@@ -48,12 +48,16 @@ defmodule Manfrod.Agent do
   - set_reminder: Schedule a reminder for yourself at a specific time
   - list_reminders: See all pending reminders you have scheduled
   - cancel_reminder: Cancel a pending reminder by its job ID
-  - recall_memory: Search your memory for relevant information not in context
-  - get_memory: Fetch a specific memory by UUID, including linked memories
+  - search_notes: Search your zettelkasten for relevant notes
+  - get_note: Fetch a specific note by UUID, including linked notes
+  - create_note: Add a new note to your slipbox (integrated during retrospection)
+  - delete_note: Remove a note and all its links
+  - link_notes: Connect two related notes
+  - unlink_notes: Disconnect two notes
 
-  Memory context is injected with each message, showing relevant memories with
-  their UUIDs. Use recall_memory to search for more, get_memory to explore
-  specific memories and their connections.
+  Note context is injected with each message, showing relevant notes with
+  their UUIDs. Use search_notes to find more, get_note to explore
+  specific notes and their connections.
 
   Use git for version control. Commit your changes with meaningful messages.
   If something breaks, you can rollback with git. Your branch is
@@ -169,30 +173,75 @@ defmodule Manfrod.Agent do
         callback: &tool_cancel_reminder/1
       ),
       ReqLLM.Tool.new!(
-        name: "recall_memory",
+        name: "search_notes",
         description:
-          "Search your memory for relevant information. Use this when you need to recall facts, preferences, or context not in the initial memory context.",
+          "Search your zettelkasten for relevant notes. Use this when you need to find facts, preferences, or context not in the initial note context.",
         parameter_schema: [
           query: [
             type: :string,
             required: true,
-            doc: "Search query - what you want to remember"
+            doc: "Search query - what you want to find"
           ]
         ],
-        callback: &tool_recall_memory/1
+        callback: &tool_search_notes/1
       ),
       ReqLLM.Tool.new!(
-        name: "get_memory",
+        name: "get_note",
         description:
-          "Fetch a specific memory by its UUID. Also returns linked memories for context. Use when you have a memory ID from the context and want more details or related memories.",
+          "Fetch a specific note by its UUID. Also returns linked notes for context. Use when you have a note ID from the context and want more details or related notes.",
         parameter_schema: [
           id: [
             type: :string,
             required: true,
-            doc: "UUID of the memory to fetch (e.g., '550e8400-e29b-41d4-a716-446655440000')"
+            doc: "UUID of the note to fetch (e.g., '550e8400-e29b-41d4-a716-446655440000')"
           ]
         ],
-        callback: &tool_get_memory/1
+        callback: &tool_get_note/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "create_note",
+        description:
+          "Create a new note in your slipbox. The note will be integrated into your zettelkasten during the next retrospection cycle. Use for facts worth remembering.",
+        parameter_schema: [
+          content: [
+            type: :string,
+            required: true,
+            doc: "The atomic idea or fact (1-2 sentences)"
+          ]
+        ],
+        callback: &tool_create_note/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "delete_note",
+        description:
+          "Delete a note from your zettelkasten. All links to/from this note are automatically removed.",
+        parameter_schema: [
+          id: [
+            type: :string,
+            required: true,
+            doc: "UUID of the note to delete"
+          ]
+        ],
+        callback: &tool_delete_note/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "link_notes",
+        description:
+          "Create a link between two notes. Links are undirected - order doesn't matter.",
+        parameter_schema: [
+          note_a_id: [type: :string, required: true, doc: "First note UUID"],
+          note_b_id: [type: :string, required: true, doc: "Second note UUID"]
+        ],
+        callback: &tool_link_notes/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "unlink_notes",
+        description: "Remove a link between two notes.",
+        parameter_schema: [
+          note_a_id: [type: :string, required: true, doc: "First note UUID"],
+          note_b_id: [type: :string, required: true, doc: "Second note UUID"]
+        ],
+        callback: &tool_unlink_notes/1
       )
     ]
   end
@@ -346,11 +395,11 @@ defmodule Manfrod.Agent do
     {:ok, "Reminder ##{job_id} cancelled."}
   end
 
-  def tool_recall_memory(%{query: query}) do
+  def tool_search_notes(%{query: query}) do
     {:ok, nodes} = Memory.search(query, limit: 10)
 
     if Enum.empty?(nodes) do
-      {:ok, "No relevant memories found for: #{query}"}
+      {:ok, "No relevant notes found for: #{query}"}
     else
       lines =
         Enum.map(nodes, fn node ->
@@ -364,37 +413,84 @@ defmodule Manfrod.Agent do
           end
         end)
 
-      {:ok, "Found #{length(nodes)} memories:\n#{Enum.join(lines, "\n")}"}
+      {:ok, "Found #{length(nodes)} notes:\n#{Enum.join(lines, "\n")}"}
     end
   end
 
-  def tool_get_memory(%{id: id}) do
+  def tool_get_note(%{id: id}) do
     case Memory.get_node(id) do
       nil ->
-        {:ok, "Memory not found: #{id}"}
+        {:ok, "Note not found: #{id}"}
 
       node ->
         linked_nodes = Memory.get_node_links(node.id)
 
         linked_content =
           if Enum.empty?(linked_nodes) do
-            "No linked memories."
+            "No linked notes."
           else
             lines =
               Enum.map(linked_nodes, fn n ->
                 "- [#{n.id}] #{n.content}"
               end)
 
-            "Linked memories:\n#{Enum.join(lines, "\n")}"
+            "Linked notes:\n#{Enum.join(lines, "\n")}"
           end
 
         {:ok,
          """
-         Memory [#{node.id}]:
+         Note [#{node.id}]:
          #{node.content}
 
          #{linked_content}
          """}
+    end
+  end
+
+  def tool_create_note(%{content: content}) do
+    case Manfrod.Voyage.embed_query(content) do
+      {:ok, embedding} ->
+        # Create in slipbox (processed_at: nil) - Retrospector will integrate
+        case Memory.create_node(%{content: content, embedding: embedding}) do
+          {:ok, node} ->
+            {:ok, "Created note in slipbox: #{node.id}"}
+
+          {:error, changeset} ->
+            {:ok, "Failed to create note: #{inspect(changeset.errors)}"}
+        end
+
+      {:error, reason} ->
+        {:ok, "Failed to generate embedding: #{inspect(reason)}"}
+    end
+  end
+
+  def tool_delete_note(%{id: id}) do
+    case Memory.delete_node(id) do
+      {:ok, _node} ->
+        {:ok, "Deleted note: #{id}"}
+
+      {:error, :not_found} ->
+        {:ok, "Note not found: #{id}"}
+    end
+  end
+
+  def tool_link_notes(%{note_a_id: a, note_b_id: b}) do
+    case Memory.create_link(a, b) do
+      {:ok, _link} ->
+        {:ok, "Linked #{a} <-> #{b}"}
+
+      {:error, changeset} ->
+        {:ok, "Failed to create link: #{inspect(changeset.errors)}"}
+    end
+  end
+
+  def tool_unlink_notes(%{note_a_id: a, note_b_id: b}) do
+    case Memory.delete_link(a, b) do
+      {:ok, _link} ->
+        {:ok, "Unlinked #{a} <-> #{b}"}
+
+      {:error, :not_found} ->
+        {:ok, "Link not found: #{a} <-> #{b}"}
     end
   end
 
@@ -568,15 +664,15 @@ defmodule Manfrod.Agent do
   # Private
 
   defp process_message(text, state, event_ctx) do
-    # Retrieve relevant memory context
-    memory_context = get_memory_context(text)
+    # Retrieve relevant note context
+    note_context = get_note_context(text)
 
-    # Build user message with memory context prepended
+    # Build user message with note context prepended
     user_content =
-      if memory_context == "" do
+      if note_context == "" do
         text
       else
-        "[Memory context]\n#{memory_context}\n\n[User message]\n#{text}"
+        "[Note context]\n#{note_context}\n\n[User message]\n#{text}"
       end
 
     user_message = ReqLLM.Context.user(user_content)
@@ -585,7 +681,7 @@ defmodule Manfrod.Agent do
     # Call LLM with tools, handle tool loop
     case call_llm_with_tools(messages, event_ctx) do
       {:ok, response_text, _final_messages} ->
-        # Store original user message (without memory) for clean history
+        # Store original user message (without note context) for clean history
         clean_user_message = ReqLLM.Context.user(text)
         assistant_message = ReqLLM.Context.assistant(response_text)
         new_messages = state.messages ++ [clean_user_message, assistant_message]
@@ -728,7 +824,7 @@ defmodule Manfrod.Agent do
 
   defp truncate_result(result), do: result
 
-  defp get_memory_context(query) do
+  defp get_note_context(query) do
     soul = Memory.get_soul()
 
     relevant =
