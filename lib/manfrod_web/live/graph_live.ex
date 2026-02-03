@@ -221,7 +221,7 @@ defmodule ManfrodWeb.GraphLive do
         </header>
 
         <%!-- Main content: Graph + Side Panel --%>
-        <div class="flex-1 flex overflow-hidden">
+        <div class="flex-1 min-h-0 flex overflow-hidden">
           <%!-- Graph container --%>
           <%= if @graph_data.nodes == [] do %>
             <div class="flex-1 flex items-center justify-center text-zinc-500">
@@ -238,14 +238,14 @@ defmodule ManfrodWeb.GraphLive do
               phx-update="ignore"
               data-graph={Jason.encode!(@graph_data)}
               data-soul-id={@soul_id}
-              class="flex-1 bg-zinc-950"
+              class="flex-1 min-h-0 bg-zinc-950"
             >
             </div>
           <% end %>
 
           <%!-- Side Panel --%>
           <%= if @selected_node do %>
-            <aside class="w-96 border-l border-zinc-700 bg-zinc-900 overflow-y-auto">
+            <aside class="fixed top-36 right-0 w-96 border-l border-zinc-700 bg-zinc-900 overflow-y-auto">
               <div class="p-4">
                 <%!-- Header --%>
                 <div class="flex items-start justify-between mb-4">
@@ -276,7 +276,7 @@ defmodule ManfrodWeb.GraphLive do
                 <%!-- Content --%>
                 <div class="mb-4">
                   <label class="block text-xs text-zinc-500 mb-1">Content</label>
-                  <div class="text-sm text-zinc-200 whitespace-pre-wrap break-words bg-zinc-800 rounded p-3 max-h-64 overflow-y-auto">
+                  <div class="text-sm text-zinc-200 bg-zinc-800 rounded p-3 max-h-64 overflow-y-auto">
                     <%= @selected_node.content %>
                   </div>
                 </div>
