@@ -25,10 +25,191 @@ defmodule ManfrodWeb.Layouts do
         </script>
         <script src="/assets/lv/phoenix_live_view.min.js">
         </script>
+        <script src="https://unpkg.com/cytoscape@3.33.1/dist/cytoscape.min.js">
+        </script>
         <script>
+          // Cytoscape Graph Hook for LiveView
+          const CytoscapeGraph = {
+            mounted() {
+              const graphData = JSON.parse(this.el.dataset.graph || '{"nodes":[],"edges":[]}');
+              const soulId = this.el.dataset.soulId;
+              
+              // Transform data for Cytoscape format
+              const elements = [
+                ...graphData.nodes.map(n => ({
+                  data: { 
+                    id: n.id, 
+                    label: n.content_preview,
+                    content: n.content,
+                    processed: n.processed,
+                    link_count: n.link_count,
+                    inserted_at: n.inserted_at
+                  }
+                })),
+                ...graphData.edges.map(e => ({
+                  data: { 
+                    id: e.source + '-' + e.target,
+                    source: e.source, 
+                    target: e.target 
+                  }
+                }))
+              ];
+              
+              this.cy = cytoscape({
+                container: this.el,
+                elements: elements,
+                style: [
+                  {
+                    selector: 'node',
+                    style: {
+                      'label': 'data(label)',
+                      'text-wrap': 'ellipsis',
+                      'text-max-width': '100px',
+                      'font-size': '10px',
+                      'color': '#a1a1aa',
+                      'text-valign': 'bottom',
+                      'text-margin-y': '5px',
+                      'background-color': '#2dd4bf',
+                      'width': 'mapData(link_count, 0, 20, 20, 50)',
+                      'height': 'mapData(link_count, 0, 20, 20, 50)'
+                    }
+                  },
+                  {
+                    selector: 'node[!processed]',
+                    style: {
+                      'background-color': '#fbbf24'
+                    }
+                  },
+                  {
+                    selector: 'node:selected',
+                    style: {
+                      'border-color': '#3b82f6',
+                      'border-width': 3
+                    }
+                  },
+                  {
+                    selector: 'node.highlighted',
+                    style: {
+                      'border-color': '#f472b6',
+                      'border-width': 3
+                    }
+                  },
+                  {
+                    selector: 'edge',
+                    style: {
+                      'line-color': '#52525b',
+                      'width': 1,
+                      'curve-style': 'bezier'
+                    }
+                  }
+                ],
+                layout: {
+                  name: 'cose',
+                  animate: false,
+                  nodeRepulsion: 8000,
+                  idealEdgeLength: 100,
+                  gravity: 0.25
+                },
+                minZoom: 0.1,
+                maxZoom: 3
+              });
+              
+              // Center on soul node if exists
+              if (soulId) {
+                const soulNode = this.cy.getElementById(soulId);
+                if (soulNode.length > 0) {
+                  this.cy.center(soulNode);
+                  soulNode.select();
+                }
+              }
+              
+              // Node click handler
+              this.cy.on('tap', 'node', (evt) => {
+                const node = evt.target;
+                this.pushEvent('node_clicked', { id: node.id() });
+              });
+              
+              // Click on background deselects
+              this.cy.on('tap', (evt) => {
+                if (evt.target === this.cy) {
+                  this.pushEvent('node_deselected', {});
+                }
+              });
+              
+              // Handle highlight_nodes event from LiveView
+              this.handleEvent('highlight_nodes', ({ ids, center_on }) => {
+                // Clear previous highlights
+                this.cy.nodes().removeClass('highlighted');
+                
+                // Highlight matching nodes
+                ids.forEach(id => {
+                  this.cy.getElementById(id).addClass('highlighted');
+                });
+                
+                // Center on first match
+                if (center_on) {
+                  const centerNode = this.cy.getElementById(center_on);
+                  if (centerNode.length > 0) {
+                    this.cy.animate({
+                      center: { eles: centerNode },
+                      zoom: 1.5,
+                      duration: 300
+                    });
+                    centerNode.select();
+                  }
+                }
+              });
+              
+              // Handle clear_highlight event
+              this.handleEvent('clear_highlight', () => {
+                this.cy.nodes().removeClass('highlighted');
+              });
+              
+              // Handle update_graph event for filter changes
+              this.handleEvent('update_graph', ({ nodes, edges }) => {
+                const elements = [
+                  ...nodes.map(n => ({
+                    data: { 
+                      id: n.id, 
+                      label: n.content_preview,
+                      content: n.content,
+                      processed: n.processed,
+                      link_count: n.link_count,
+                      inserted_at: n.inserted_at
+                    }
+                  })),
+                  ...edges.map(e => ({
+                    data: { 
+                      id: e.source + '-' + e.target,
+                      source: e.source, 
+                      target: e.target 
+                    }
+                  }))
+                ];
+                
+                this.cy.json({ elements });
+                this.cy.layout({
+                  name: 'cose',
+                  animate: true,
+                  animationDuration: 500,
+                  nodeRepulsion: 8000,
+                  idealEdgeLength: 100,
+                  gravity: 0.25
+                }).run();
+              });
+            },
+            
+            destroyed() {
+              if (this.cy) {
+                this.cy.destroy();
+              }
+            }
+          };
+
           let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
           let liveSocket = new LiveView.LiveSocket("/live", Phoenix.Socket, {
-            params: { _csrf_token: csrfToken }
+            params: { _csrf_token: csrfToken },
+            hooks: { CytoscapeGraph }
           });
           liveSocket.connect();
         </script>
@@ -65,6 +246,7 @@ defmodule ManfrodWeb.Layouts do
     <nav class="flex justify-center items-center gap-4 w-full font-mono px-2 py-4">
       <.nav_link href="/" label="activity" current={@current == :activity} />
       <.nav_link href="/dashboard" label="dashboard" current={@current == :dashboard} />
+      <.nav_link href="/graph" label="graph" current={@current == :graph} />
     </nav>
     """
   end

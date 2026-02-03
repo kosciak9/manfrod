@@ -299,6 +299,90 @@ defmodule Manfrod.Memory do
     |> Repo.all()
   end
 
+  # --- Graph Visualization ---
+
+  @doc """
+  Get all graph data for visualization.
+
+  Returns a map with nodes and edges suitable for graph rendering.
+
+  ## Options
+
+    * `:filter` - Filter nodes: `:all` (default), `:processed`, or `:slipbox`
+
+  ## Example
+
+      %{
+        nodes: [
+          %{
+            id: "uuid",
+            content: "full content",
+            content_preview: "first 100 chars...",
+            processed: true,
+            link_count: 5,
+            inserted_at: ~U[2024-01-01 00:00:00Z]
+          }
+        ],
+        edges: [
+          %{source: "uuid-a", target: "uuid-b"}
+        ]
+      }
+  """
+  def get_graph_data(opts \\ []) do
+    filter = Keyword.get(opts, :filter, :all)
+
+    # Fetch nodes based on filter
+    nodes_query =
+      case filter do
+        :processed ->
+          from(n in Node, where: not is_nil(n.processed_at))
+
+        :slipbox ->
+          from(n in Node, where: is_nil(n.processed_at))
+
+        :all ->
+          from(n in Node)
+      end
+
+    nodes = Repo.all(nodes_query)
+    node_ids = Enum.map(nodes, & &1.id) |> MapSet.new()
+
+    # Count links per node
+    link_counts =
+      from(l in Link,
+        select: {l.node_a_id, l.node_b_id}
+      )
+      |> Repo.all()
+      |> Enum.flat_map(fn {a, b} -> [{a, 1}, {b, 1}] end)
+      |> Enum.reduce(%{}, fn {id, count}, acc ->
+        Map.update(acc, id, count, &(&1 + count))
+      end)
+
+    # Fetch edges (only between visible nodes)
+    edges =
+      from(l in Link,
+        where:
+          l.node_a_id in ^MapSet.to_list(node_ids) and l.node_b_id in ^MapSet.to_list(node_ids),
+        select: %{source: l.node_a_id, target: l.node_b_id}
+      )
+      |> Repo.all()
+
+    # Transform nodes for visualization
+    nodes_data =
+      Enum.map(nodes, fn node ->
+        %{
+          id: node.id,
+          content: node.content,
+          content_preview: String.slice(node.content || "", 0, 100),
+          processed: not is_nil(node.processed_at),
+          link_count: Map.get(link_counts, node.id, 0),
+          inserted_at: node.inserted_at
+        }
+      end)
+
+    %{nodes: nodes_data, edges: edges}
+  end
+
   # --- Hybrid Search with Query Expansion ---
 
   @doc """
