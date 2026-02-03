@@ -193,14 +193,16 @@ defmodule Manfrod.MemoryTest do
       assert Memory.build_context([]) == ""
     end
 
-    test "formats nodes as bullet list" do
+    test "formats nodes with UUIDs and tools hint" do
       n1 = insert_node!(%{content: "Fact one"})
       n2 = insert_node!(%{content: "Fact two"})
 
       context = Memory.build_context([n1, n2])
-      assert context =~ "Relevant memories:"
-      assert context =~ "Fact one"
-      assert context =~ "Fact two"
+      assert context =~ "Relevant memories"
+      assert context =~ "recall_memory"
+      assert context =~ "get_memory"
+      assert context =~ "[#{n1.id}] Fact one"
+      assert context =~ "[#{n2.id}] Fact two"
     end
   end
 end

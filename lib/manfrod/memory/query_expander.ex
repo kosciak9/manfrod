@@ -21,18 +21,17 @@ defmodule Manfrod.Memory.QueryExpander do
 
   @model "liquid/lfm-2.5-1.2b-instruct:free"
 
+  @system_message "You are a query expansion assistant. Rewrite search queries into multiple variations to improve retrieval. Always output valid JSON arrays only, no other text."
+
   @expansion_prompt """
-  Rewrite the following query into 3 different search queries that would help find relevant information in a personal knowledge base. Include the original query as the first item.
+  Rewrite this query into 3 different search queries. Include the original as first item.
 
   Rules:
-  - Each query should capture a different angle or phrasing
-  - Keep queries concise (under 15 words each)
-  - Focus on semantic variations, not just synonyms
-  - Output ONLY a JSON array of strings, nothing else
+  - Each query captures a different angle or phrasing
+  - Keep queries concise (under 15 words)
+  - Output ONLY a JSON array of strings
 
   Query: {{QUERY}}
-
-  Output:
   """
 
   @doc """
@@ -52,7 +51,8 @@ defmodule Manfrod.Memory.QueryExpander do
     prompt = String.replace(@expansion_prompt, "{{QUERY}}", query)
 
     messages = [
-      %{role: "user", content: prompt}
+      ReqLLM.Context.system(@system_message),
+      ReqLLM.Context.user(prompt)
     ]
 
     case LLM.generate_simple(@model, messages, purpose: :query_expansion, timeout_ms: timeout_ms) do
