@@ -217,7 +217,7 @@ defmodule Manfrod.LLM do
         base_url: provider.base_url,
         api_key: api_key,
         receive_timeout: @timeout_ms,
-        retry: false
+        req_http_options: [retry: false]
       ]
       |> maybe_add_tools(tools)
 
