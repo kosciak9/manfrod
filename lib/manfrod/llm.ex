@@ -83,11 +83,15 @@ defmodule Manfrod.LLM do
     call_with_fallback(messages, tools, purpose, @fallback_chain)
   end
 
+  # Simple call retry config
+  @simple_max_retries 3
+  @simple_initial_delay_ms 500
+
   @doc """
   Direct call to a specific model without fallback chain.
 
   Useful for lightweight, fast calls where fallback is not needed (e.g., query expansion).
-  Uses shorter timeout (30s) and no retries.
+  Uses shorter timeout (30s) and retries on 429/5xx errors with exponential backoff.
 
   ## Arguments
 
@@ -109,12 +113,17 @@ defmodule Manfrod.LLM do
     purpose = Keyword.get(opts, :purpose, :simple)
     timeout_ms = Keyword.get(opts, :timeout_ms, 30_000)
 
+    do_generate_simple(model_id, messages, provider_key, purpose, timeout_ms, @simple_max_retries)
+  end
+
+  defp do_generate_simple(model_id, messages, provider_key, purpose, timeout_ms, retries_left) do
     provider = Map.fetch!(@providers, provider_key)
     api_key = Application.get_env(:manfrod, provider.api_key_config)
 
     context = ReqLLM.Context.new(messages)
     model = %{id: model_id, provider: :openai}
 
+    attempt = @simple_max_retries - retries_left + 1
     start_time = System.monotonic_time(:millisecond)
 
     Events.broadcast(:llm_call_started, %{
@@ -124,7 +133,7 @@ defmodule Manfrod.LLM do
         provider: provider_key,
         tier: :free,
         purpose: purpose,
-        attempt: 1
+        attempt: attempt
       }
     })
 
@@ -166,13 +175,42 @@ defmodule Manfrod.LLM do
             provider: provider_key,
             tier: :free,
             purpose: purpose,
-            attempt: 1,
+            attempt: attempt,
             error: format_error(reason),
             latency_ms: latency_ms
           }
         })
 
-        error
+        # Retry on retryable errors (429, 5xx, transport errors)
+        if retries_left > 1 and retryable_error?(reason) do
+          delay_ms = (@simple_initial_delay_ms * :math.pow(2, attempt - 1)) |> trunc()
+
+          Events.broadcast(:llm_retry, %{
+            source: :llm,
+            meta: %{
+              model: model_id,
+              provider: provider_key,
+              tier: :free,
+              purpose: purpose,
+              attempt: attempt,
+              delay_ms: delay_ms,
+              reason: format_error(reason)
+            }
+          })
+
+          Process.sleep(delay_ms)
+
+          do_generate_simple(
+            model_id,
+            messages,
+            provider_key,
+            purpose,
+            timeout_ms,
+            retries_left - 1
+          )
+        else
+          error
+        end
     end
   end
 
