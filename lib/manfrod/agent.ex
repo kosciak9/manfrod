@@ -35,6 +35,7 @@ defmodule Manfrod.Agent do
   alias Manfrod.Memory
   alias Manfrod.Memory.Soul
   alias Manfrod.Shell
+  alias Manfrod.Telegram.TypingRefresher
 
   @system_prompt """
   Your capabilities:
@@ -597,7 +598,18 @@ defmodule Manfrod.Agent do
     end
   end
 
-  defp call_llm_with_tools(messages, event_ctx, iteration \\ 0) do
+  defp call_llm_with_tools(messages, event_ctx) do
+    # Start typing refresher to keep Telegram indicator alive during LLM retries/fallbacks
+    {:ok, refresher_pid} = TypingRefresher.start(event_ctx)
+
+    try do
+      do_call_llm_with_tools(messages, event_ctx, 0)
+    after
+      TypingRefresher.stop(refresher_pid)
+    end
+  end
+
+  defp do_call_llm_with_tools(messages, event_ctx, iteration) do
     # Prevent infinite tool loops
     if iteration > 50 do
       {:error, :max_tool_iterations}
@@ -660,7 +672,7 @@ defmodule Manfrod.Agent do
                 end)
 
               # Continue the conversation
-              call_llm_with_tools(messages_with_results, event_ctx, iteration + 1)
+              do_call_llm_with_tools(messages_with_results, event_ctx, iteration + 1)
 
             _other ->
               # No more tools, return final text
