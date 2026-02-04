@@ -53,7 +53,7 @@ defmodule Manfrod.Telegram.ActivityHandler do
     send_typing(chat_id)
     # Send action notification with args formatted as code
     html = "🔧 " <> Formatter.format_tool_call(action_name, args)
-    Sender.send_html(chat_id, html)
+    Sender.send_silent(chat_id, html)
   end
 
   defp handle_activity(%Activity{type: :action_started, reply_to: chat_id}) do
