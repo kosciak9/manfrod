@@ -40,7 +40,10 @@ defmodule Manfrod.Memory.Retrospector do
   There is a high chance you'll find duplicates in slipbox, both duplicates of
   other slipbox items and duplicates of what's already in the graph. That's
   because we extract all interesting facts from conversations without regard to
-  current contents. Your job is to keep it deduplicated.
+  current contents. Your job is to keep it deduplicated. Try to remove
+  duplicates and update one note with all the information. We should keep
+  things that can be no longer as relevant, but duplicated notes clutter the
+  search a lot. Always try to consolidate similar notes.
 
   ## Graph Gardening
 
