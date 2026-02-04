@@ -270,7 +270,7 @@ defmodule Manfrod.Events.Store do
         end)
 
       # Get task content if in task mode
-      task_id = get_in(mode_event || %{}, [:meta, "task_id"])
+      task_id = mode_event && mode_event.meta["task_id"]
       task_content = if task_id, do: get_task_content(task_id), else: nil
 
       AgentRun.from_events(start, end_event,

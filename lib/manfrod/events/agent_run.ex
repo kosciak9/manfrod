@@ -58,7 +58,7 @@ defmodule Manfrod.Events.AgentRun do
     mode_event = Keyword.get(opts, :mode_event)
 
     mode = get_builder_mode(mode_event)
-    task_id = get_meta_field(mode_event, "task_id")
+    task_id = mode_event && mode_event.meta["task_id"]
 
     intent =
       case mode do
@@ -75,8 +75,8 @@ defmodule Manfrod.Events.AgentRun do
   end
 
   def from_events(%{type: "retrospection_started"} = start, end_event, _opts) do
-    slipbox_count = get_meta_field(start, "slipbox_count") || 0
-    review_count = get_meta_field(start, "review_count") || 0
+    slipbox_count = start.meta["slipbox_count"] || 0
+    review_count = start.meta["review_count"] || 0
 
     intent = "Process #{slipbox_count} slipbox nodes, review #{review_count} graph nodes"
 
@@ -87,26 +87,15 @@ defmodule Manfrod.Events.AgentRun do
     })
   end
 
-  # Helper to safely get a field from the meta map of a struct
-  defp get_meta_field(nil, _field), do: nil
-
-  defp get_meta_field(%{meta: meta}, field) when is_map(meta) do
-    Map.get(meta, field)
-  end
-
-  defp get_meta_field(_, _), do: nil
-
   defp get_builder_mode(nil), do: nil
 
-  defp get_builder_mode(%{meta: meta}) when is_map(meta) do
-    case Map.get(meta, "mode") do
+  defp get_builder_mode(event) do
+    case event.meta["mode"] do
       "task" -> :task
       "exploration" -> :exploration
       _ -> nil
     end
   end
-
-  defp get_builder_mode(_), do: nil
 
   defp build_run(agent, start_event, nil, extras) do
     %__MODULE__{
