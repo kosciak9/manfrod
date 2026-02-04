@@ -9,7 +9,10 @@ defmodule Manfrod.Events.Store do
 
   alias Manfrod.Repo
   alias Manfrod.Events.Activity
+  alias Manfrod.Events.AgentRun
   alias Manfrod.Events.AuditEvent
+  alias Manfrod.Tasks.Task
+  alias Manfrod.Memory.Node
 
   @doc """
   Insert an Activity into the audit log.
@@ -71,16 +74,27 @@ defmodule Manfrod.Events.Store do
   List recent audit events, excluding debug/info logs by default.
   Pass `include_all_logs: true` to include all log levels.
 
+  ## Options
+
+  - `:include_all_logs` - include debug/info logs (default: false)
+  - `:from` - filter events from this DateTime (inclusive)
+  - `:to` - filter events until this DateTime (inclusive)
+  - `:source` - filter by source (atom or string, e.g. :builder, "retrospector")
+
   Returns a list of Activity structs for compatibility with ActivityLive.
   """
   def list_recent_filtered(limit \\ 200, opts \\ []) do
     include_all_logs = Keyword.get(opts, :include_all_logs, false)
+    from_dt = Keyword.get(opts, :from)
+    to_dt = Keyword.get(opts, :to)
+    source = Keyword.get(opts, :source)
 
     query =
       AuditEvent
       |> order_by([e], desc: e.timestamp)
       |> limit(^limit)
 
+    # Apply log level filter
     query =
       if include_all_logs do
         query
@@ -92,6 +106,30 @@ defmodule Manfrod.Events.Store do
           e.type != "log" or
             fragment("(?->>'level')::text", e.meta) in ["warning", "error"]
         )
+      end
+
+    # Apply time range filter
+    query =
+      if from_dt do
+        where(query, [e], e.timestamp >= ^from_dt)
+      else
+        query
+      end
+
+    query =
+      if to_dt do
+        where(query, [e], e.timestamp <= ^to_dt)
+      else
+        query
+      end
+
+    # Apply source filter
+    query =
+      if source do
+        source_str = to_string(source)
+        where(query, [e], e.source == ^source_str)
+      else
+        query
       end
 
     query
@@ -124,6 +162,157 @@ defmodule Manfrod.Events.Store do
     AuditEvent
     |> where([e], e.type == "log" and e.timestamp < ^cutoff)
     |> Repo.delete_all()
+  end
+
+  @doc """
+  List agent runs (Builder and Retrospector) from the last N days.
+
+  Correlates start/complete/fail events into AgentRun structs.
+  For Builder runs in task mode, joins to the tasks table to get the intent.
+
+  Options:
+  - `:days` - number of days to look back (default: 7)
+  - `:agent` - filter by agent (:builder, :retrospector, or nil for all)
+
+  Returns a list of AgentRun structs, sorted by started_at descending.
+  """
+  def list_agent_runs(opts \\ []) do
+    days = Keyword.get(opts, :days, 7)
+    agent_filter = Keyword.get(opts, :agent)
+
+    cutoff = DateTime.add(DateTime.utc_now(), -days, :day)
+
+    # Define event types for each agent
+    builder_types = [
+      "builder_started",
+      "builder_mode_selected",
+      "builder_completed",
+      "builder_failed"
+    ]
+
+    retrospector_types = [
+      "retrospection_started",
+      "retrospection_completed",
+      "retrospection_failed"
+    ]
+
+    event_types =
+      case agent_filter do
+        :builder -> builder_types
+        :retrospector -> retrospector_types
+        nil -> builder_types ++ retrospector_types
+      end
+
+    # Query all relevant events
+    events =
+      AuditEvent
+      |> where([e], e.timestamp >= ^cutoff)
+      |> where([e], e.type in ^event_types)
+      |> order_by([e], asc: e.timestamp)
+      |> Repo.all()
+
+    # Separate by agent type
+    {builder_events, retrospector_events} =
+      Enum.split_with(events, fn e ->
+        String.starts_with?(e.type, "builder_")
+      end)
+
+    # Build runs for each agent type
+    builder_runs =
+      if agent_filter in [nil, :builder] do
+        build_builder_runs(builder_events)
+      else
+        []
+      end
+
+    retrospector_runs =
+      if agent_filter in [nil, :retrospector] do
+        build_retrospector_runs(retrospector_events)
+      else
+        []
+      end
+
+    # Combine and sort by started_at descending
+    (builder_runs ++ retrospector_runs)
+    |> Enum.sort_by(& &1.started_at, {:desc, DateTime})
+  end
+
+  defp build_builder_runs(events) do
+    # Group events into runs by finding start events and matching them with mode/end events
+    # Events are already sorted by timestamp ascending
+
+    starts = Enum.filter(events, &(&1.type == "builder_started"))
+    modes = Enum.filter(events, &(&1.type == "builder_mode_selected"))
+    ends = Enum.filter(events, &(&1.type in ["builder_completed", "builder_failed"]))
+
+    # For each start, find the next mode and end event
+    Enum.map(starts, fn start ->
+      # Find the mode event that comes after this start (before next start)
+      mode_event =
+        Enum.find(modes, fn m ->
+          DateTime.compare(m.timestamp, start.timestamp) in [:gt, :eq] and
+            not Enum.any?(starts, fn s ->
+              s != start and
+                DateTime.compare(s.timestamp, start.timestamp) == :gt and
+                DateTime.compare(s.timestamp, m.timestamp) == :lt
+            end)
+        end)
+
+      # Find the end event that comes after this start (before next start)
+      end_event =
+        Enum.find(ends, fn e ->
+          DateTime.compare(e.timestamp, start.timestamp) in [:gt, :eq] and
+            not Enum.any?(starts, fn s ->
+              s != start and
+                DateTime.compare(s.timestamp, start.timestamp) == :gt and
+                DateTime.compare(s.timestamp, e.timestamp) == :lt
+            end)
+        end)
+
+      # Get task content if in task mode
+      task_id = get_in(mode_event || %{}, [:meta, "task_id"])
+      task_content = if task_id, do: get_task_content(task_id), else: nil
+
+      AgentRun.from_events(start, end_event,
+        mode_event: mode_event,
+        task_content: task_content
+      )
+    end)
+  end
+
+  defp build_retrospector_runs(events) do
+    # Group events into runs by finding start events and matching them with end events
+
+    starts = Enum.filter(events, &(&1.type == "retrospection_started"))
+    ends = Enum.filter(events, &(&1.type in ["retrospection_completed", "retrospection_failed"]))
+
+    # For each start, find the next end event
+    Enum.map(starts, fn start ->
+      end_event =
+        Enum.find(ends, fn e ->
+          DateTime.compare(e.timestamp, start.timestamp) in [:gt, :eq] and
+            not Enum.any?(starts, fn s ->
+              s != start and
+                DateTime.compare(s.timestamp, start.timestamp) == :gt and
+                DateTime.compare(s.timestamp, e.timestamp) == :lt
+            end)
+        end)
+
+      AgentRun.from_events(start, end_event)
+    end)
+  end
+
+  defp get_task_content(task_id) do
+    case Repo.one(
+           from t in Task,
+             join: n in Node,
+             on: n.id == t.note_id,
+             where: t.id == ^task_id,
+             select: n.content
+         ) do
+      nil -> nil
+      content -> content
+    end
   end
 
   @doc """

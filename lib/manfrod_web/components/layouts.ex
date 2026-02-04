@@ -247,6 +247,7 @@ defmodule ManfrodWeb.Layouts do
       <.nav_link href="/" label="activity" current={@current == :activity} />
       <.nav_link href="/dashboard" label="dashboard" current={@current == :dashboard} />
       <.nav_link href="/graph" label="graph" current={@current == :graph} />
+      <.nav_link href="/self-improvement" label="self-improvement" current={@current == :self_improvement} />
     </nav>
     """
   end

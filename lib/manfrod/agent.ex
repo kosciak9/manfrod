@@ -521,9 +521,24 @@ defmodule Manfrod.Agent do
     pending = Memory.get_pending_messages()
     restored_messages = Enum.map(pending, &message_to_context/1)
 
+    # If we restored messages, add a system notice so agent knows it restarted
+    messages =
+      if restored_messages != [] do
+        restart_notice =
+          ReqLLM.Context.user(
+            "[SYSTEM] Session was restarted (crash, update, or manual restart). " <>
+              "Restored #{length(pending)} messages from conversation. " <>
+              "Do not repeat actions already taken."
+          )
+
+        [system_message | restored_messages] ++ [restart_notice]
+      else
+        [system_message]
+      end
+
     {:ok,
      %{
-       messages: [system_message | restored_messages],
+       messages: messages,
        flush_timer: nil
      }}
   end

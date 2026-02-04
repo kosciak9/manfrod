@@ -8,6 +8,13 @@ defmodule ManfrodWeb.ActivityLive do
   Filters:
   - Log levels: warning+ by default, toggle to show info/debug
   - Event types: all shown by default
+
+  Supports query params for viewing specific time ranges:
+  - `from` - ISO8601 datetime to filter events from
+  - `to` - ISO8601 datetime to filter events until
+  - `source` - filter by source (e.g., "builder", "retrospector")
+
+  When filtered, live updates are disabled and a context banner is shown.
   """
   use ManfrodWeb, :live_view
 
@@ -19,45 +26,104 @@ defmodule ManfrodWeb.ActivityLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket) do
-      Events.subscribe()
-    end
-
-    # Load persisted events on mount (warning+ logs only by default)
-    events = Store.list_recent_filtered(@max_events, include_all_logs: false)
-
     socket =
       socket
-      |> assign(events: events)
+      |> assign(events: [])
       |> assign(show_all_logs: false)
       |> assign(expanded: MapSet.new())
+      |> assign(filter: nil)
 
     {:ok, socket}
   end
 
   @impl true
-  def handle_info({:activity, %Activity{} = activity}, socket) do
-    # Filter incoming logs based on current setting
-    should_show =
-      if activity.type == :log do
-        socket.assigns.show_all_logs or
-          activity.meta[:level] in [:warning, :error]
-      else
-        true
-      end
+  def handle_params(params, _uri, socket) do
+    # Parse filter params
+    filter = parse_filter_params(params)
+
+    # Only subscribe to live events if not filtered
+    if connected?(socket) and is_nil(filter) do
+      Events.subscribe()
+    end
+
+    # Load events based on filter
+    events = load_events(filter, socket.assigns.show_all_logs)
 
     socket =
-      if should_show do
-        events =
-          [activity | socket.assigns.events]
-          |> Enum.take(@max_events)
-
-        assign(socket, events: events)
-      else
-        socket
-      end
+      socket
+      |> assign(filter: filter)
+      |> assign(events: events)
 
     {:noreply, socket}
+  end
+
+  defp parse_filter_params(params) do
+    from_str = Map.get(params, "from")
+    to_str = Map.get(params, "to")
+    source = Map.get(params, "source")
+
+    from_dt = parse_datetime(from_str)
+    to_dt = parse_datetime(to_str)
+
+    if from_dt || to_dt || source do
+      %{from: from_dt, to: to_dt, source: source}
+    else
+      nil
+    end
+  end
+
+  defp parse_datetime(nil), do: nil
+
+  defp parse_datetime(str) do
+    case DateTime.from_iso8601(str) do
+      {:ok, dt, _offset} -> dt
+      _ -> nil
+    end
+  end
+
+  defp load_events(nil, show_all_logs) do
+    Store.list_recent_filtered(@max_events, include_all_logs: show_all_logs)
+  end
+
+  defp load_events(filter, show_all_logs) do
+    opts = [
+      include_all_logs: show_all_logs,
+      from: filter.from,
+      to: filter.to,
+      source: filter.source
+    ]
+
+    Store.list_recent_filtered(@max_events, opts)
+  end
+
+  @impl true
+  def handle_info({:activity, %Activity{} = activity}, socket) do
+    # Only process live events if not filtered
+    if socket.assigns.filter do
+      {:noreply, socket}
+    else
+      # Filter incoming logs based on current setting
+      should_show =
+        if activity.type == :log do
+          socket.assigns.show_all_logs or
+            activity.meta[:level] in [:warning, :error]
+        else
+          true
+        end
+
+      socket =
+        if should_show do
+          events =
+            [activity | socket.assigns.events]
+            |> Enum.take(@max_events)
+
+          assign(socket, events: events)
+        else
+          socket
+        end
+
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -65,7 +131,7 @@ defmodule ManfrodWeb.ActivityLive do
     show_all_logs = !socket.assigns.show_all_logs
 
     # Reload events with new filter
-    events = Store.list_recent_filtered(@max_events, include_all_logs: show_all_logs)
+    events = load_events(socket.assigns.filter, show_all_logs)
 
     {:noreply, assign(socket, show_all_logs: show_all_logs, events: events)}
   end
@@ -81,12 +147,21 @@ defmodule ManfrodWeb.ActivityLive do
     {:noreply, assign(socket, expanded: expanded)}
   end
 
+  def handle_event("clear_filter", _, socket) do
+    {:noreply, push_patch(socket, to: "/")}
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
       <Layouts.nav current={:activity} />
       <div class="h-screen flex flex-col font-mono text-sm bg-zinc-900 text-zinc-200">
+        <%!-- Context Banner (when filtered) --%>
+        <%= if @filter do %>
+          <.filter_banner filter={@filter} />
+        <% end %>
+
         <%!-- Navbar --%>
         <header class="sticky top-0 z-10 bg-zinc-950 border-b border-zinc-700 px-4 py-3">
           <div class="flex justify-end items-center">
@@ -148,6 +223,63 @@ defmodule ManfrodWeb.ActivityLive do
       </div>
     </Layouts.app>
     """
+  end
+
+  # Filter banner component
+  defp filter_banner(assigns) do
+    ~H"""
+    <div class="bg-blue-950/50 border-b border-blue-800 px-4 py-3">
+      <div class="flex items-center justify-between max-w-4xl mx-auto">
+        <div class="flex items-center gap-3">
+          <.link navigate="/self-improvement" class="text-blue-400 hover:text-blue-300 text-xs">
+            ← Back to Self-Improvement
+          </.link>
+          <span class="text-zinc-500">|</span>
+          <span class="text-zinc-300 text-sm">
+            <%= format_filter_description(@filter) %>
+          </span>
+        </div>
+        <button
+          phx-click="clear_filter"
+          class="text-zinc-400 hover:text-zinc-200 text-xs flex items-center gap-1"
+        >
+          ✕ Clear filter
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  defp format_filter_description(filter) do
+    parts = []
+
+    parts =
+      if filter.source do
+        agent_name = String.capitalize(filter.source)
+        parts ++ ["#{agent_name} run"]
+      else
+        parts
+      end
+
+    parts =
+      if filter.from do
+        parts ++ ["from #{format_datetime(filter.from)}"]
+      else
+        parts
+      end
+
+    parts =
+      if filter.to do
+        parts ++ ["to #{format_datetime(filter.to)}"]
+      else
+        parts
+      end
+
+    Enum.join(parts, " ")
+  end
+
+  defp format_datetime(dt) do
+    Calendar.strftime(dt, "%b %d, %H:%M:%S")
   end
 
   # Row background classes (base + hover)
