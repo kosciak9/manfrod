@@ -2,11 +2,12 @@
 # Main site playbook for Manfrod deployment
 #
 # This playbook:
-# 1. Installs and configures Podman
-# 2. Sets up ParadeDB container with persistent storage
-# 3. Creates systemd service for ParadeDB
-# 4. Installs and configures Tailscale
-# 5. Configures firewall (optional)
+# 1. Configures system (hostname, timezone, locale)
+# 2. Installs and configures Podman
+# 3. Sets up ParadeDB container with persistent storage
+# 4. Creates systemd service for ParadeDB
+# 5. Installs and configures Tailscale
+# 6. Configures firewall (optional)
 #
 # Prerequisites:
 # - Bootstrap playbook has been run
@@ -23,7 +24,8 @@
 #   ansible-playbook playbooks/site.yml --vault-password-file .vault_pass --skip-tags deploy
 #
 # Available tags:
-#   system    - hostname, timezone, base packages
+#   system    - hostname, timezone, locale, base packages
+#   locale    - locale configuration only
 #   network   - WiFi, networkd, resolved
 #   podman    - container runtime setup
 #   tun       - TUN module for Tailscale
@@ -73,6 +75,47 @@
         update_cache: true
       become: true
       tags: [system]
+
+    # =========================================================================
+    # Locale Configuration
+    # =========================================================================
+
+    - name: Ensure locale is present in locale.gen
+      ansible.builtin.lineinfile:
+        path: /etc/locale.gen
+        regexp: '^#?{{ locale }} '
+        line: '{{ locale }} UTF-8'
+      become: true
+      notify: Generate locales
+      tags: [system, locale]
+
+    - name: Ensure en_US.UTF-8 locale is enabled (fallback)
+      ansible.builtin.lineinfile:
+        path: /etc/locale.gen
+        regexp: '^#?en_US\.UTF-8 '
+        line: 'en_US.UTF-8 UTF-8'
+      become: true
+      notify: Generate locales
+      tags: [system, locale]
+
+    - name: Configure system locale
+      ansible.builtin.copy:
+        content: |
+          LANG={{ locale }}
+          LC_ALL={{ locale }}
+        dest: /etc/locale.conf
+        mode: "0644"
+      become: true
+      tags: [system, locale]
+
+    - name: Configure console keymap
+      ansible.builtin.copy:
+        content: |
+          KEYMAP=us
+        dest: /etc/vconsole.conf
+        mode: "0644"
+      become: true
+      tags: [system, locale]
 
     # =========================================================================
     # WiFi Configuration (wpa_supplicant)
@@ -600,6 +643,10 @@
   handlers:
     - name: Apply hostname
       ansible.builtin.command: hostnamectl set-hostname {{ hostname }}
+      become: true
+
+    - name: Generate locales
+      ansible.builtin.command: locale-gen
       become: true
 
     - name: Restart wpa_supplicant
