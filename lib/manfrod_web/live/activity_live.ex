@@ -138,7 +138,7 @@ defmodule ManfrodWeb.ActivityLive do
                 <%= format_detail(event) %>
               </span>
             </div>
-            <%= if MapSet.member?(@expanded, event.id) and has_expandable_content?(event) do %>
+            <%= if MapSet.member?(@expanded, event.id) do %>
               <div class="col-span-full py-3 px-4 border-b border-zinc-800 bg-zinc-950/50">
                 <pre class="whitespace-pre-wrap break-all text-xs text-zinc-400 max-h-72 overflow-y-auto leading-relaxed pl-4"><%= format_expanded(event) %></pre>
               </div>
@@ -307,31 +307,6 @@ defmodule ManfrodWeb.ActivityLive do
 
   defp format_detail(_), do: ""
 
-  # Check if event has expandable content
-  defp has_expandable_content?(%Activity{type: :action_started}), do: true
-  defp has_expandable_content?(%Activity{type: :action_completed}), do: true
-
-  defp has_expandable_content?(%Activity{type: :log, meta: %{stacktrace: stacktrace}})
-       when stacktrace != "" and not is_nil(stacktrace),
-       do: true
-
-  defp has_expandable_content?(%Activity{type: :log, meta: %{message: message}})
-       when is_binary(message) and byte_size(message) > 100,
-       do: true
-
-  defp has_expandable_content?(%Activity{type: :log, meta: %{message: message}})
-       when is_list(message) and length(message) > 100,
-       do: true
-
-  defp has_expandable_content?(%Activity{type: :message_received}), do: true
-  defp has_expandable_content?(%Activity{type: :responding}), do: true
-  defp has_expandable_content?(%Activity{type: :narrating}), do: true
-  # LLM events with details
-  defp has_expandable_content?(%Activity{type: :llm_call_succeeded}), do: true
-  defp has_expandable_content?(%Activity{type: :llm_call_failed}), do: true
-  defp has_expandable_content?(%Activity{type: :llm_fallback}), do: true
-  defp has_expandable_content?(_), do: false
-
   # Format expanded content
   defp format_expanded(%Activity{type: :action_started, meta: meta}) do
     """
@@ -415,6 +390,91 @@ defmodule ManfrodWeb.ActivityLive do
     Purpose: #{meta[:purpose]}
     Reason: #{meta[:reason]}
     """
+  end
+
+  defp format_expanded(%Activity{type: :llm_call_started, meta: meta}) do
+    """
+    Provider: #{meta[:provider]}
+    Model: #{meta[:model]}
+    Tier: #{meta[:tier]}
+    Purpose: #{meta[:purpose]}
+    Attempt: #{meta[:attempt]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :llm_retry, meta: meta}) do
+    """
+    Provider: #{meta[:provider]}
+    Model: #{meta[:model]}
+    Tier: #{meta[:tier]}
+    Purpose: #{meta[:purpose]}
+    Attempt: #{meta[:attempt]}
+    Delay: #{meta[:delay_ms]}ms
+    Reason: #{meta[:reason]}
+    """
+  end
+
+  # Extraction events
+  defp format_expanded(%Activity{type: :extraction_started, meta: meta}) do
+    "Messages to process: #{meta[:message_count]}"
+  end
+
+  defp format_expanded(%Activity{type: :extraction_completed, meta: meta}) do
+    """
+    Conversation ID: #{meta[:conversation_id]}
+    Nodes created: #{meta[:node_count]}
+    Summary: #{meta[:summary_preview]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :extraction_failed, meta: meta}) do
+    "Reason: #{meta[:reason]}"
+  end
+
+  # Retrospection events
+  defp format_expanded(%Activity{type: :retrospection_started, meta: meta}) do
+    """
+    Slipbox nodes: #{meta[:slipbox_count]}
+    Review sample: #{meta[:review_count]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :retrospection_completed, meta: meta}) do
+    """
+    Nodes processed: #{meta[:nodes_processed]}
+    Links created: #{meta[:links_created]}
+    Insights created: #{meta[:insights_created]}
+    Nodes deleted: #{meta[:nodes_deleted]}
+    Links deleted: #{meta[:links_deleted]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :retrospection_failed, meta: meta}) do
+    "Reason: #{meta[:reason]}"
+  end
+
+  # Memory events
+  defp format_expanded(%Activity{type: :memory_searched, meta: meta}) do
+    """
+    Query: #{meta[:query_preview]}
+    Expanded queries: #{meta[:expanded_queries]}
+    Results: #{meta[:result_count]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :memory_node_created, meta: meta}) do
+    """
+    Node ID: #{meta[:node_id]}
+    Content: #{meta[:content_preview]}
+    """
+  end
+
+  defp format_expanded(%Activity{type: :memory_link_created, meta: meta}) do
+    "Link: #{meta[:node_a_id]} <-> #{meta[:node_b_id]}"
+  end
+
+  defp format_expanded(%Activity{type: :memory_node_processed, meta: meta}) do
+    "Node ID: #{meta[:node_id]}"
   end
 
   defp format_expanded(%Activity{meta: meta}) do
