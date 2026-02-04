@@ -33,6 +33,7 @@ defmodule Manfrod.Agent do
   alias Manfrod.Events
   alias Manfrod.LLM
   alias Manfrod.Memory
+  alias Manfrod.Repo
   alias Manfrod.Memory.Soul
   alias Manfrod.Shell
   alias Manfrod.Telegram.TypingRefresher
@@ -516,18 +517,19 @@ defmodule Manfrod.Agent do
   def init(_opts) do
     system_message = ReqLLM.Context.system(build_system_prompt())
 
-    # Check if we just restarted after an update
-    Process.send_after(self(), :check_post_update, 1_000)
+    # Restore any pending messages from DB (survives crashes/restarts)
+    pending = Memory.get_pending_messages()
+    restored_messages = Enum.map(pending, &message_to_context/1)
 
     {:ok,
      %{
-       messages: [system_message],
+       messages: [system_message | restored_messages],
        flush_timer: nil
      }}
   end
 
   defp build_system_prompt do
-    unless Manfrod.Deployment.db_healthy?() do
+    unless Repo.healthy?() do
       @system_prompt <> Soul.base_prompt()
     else
       context =
@@ -555,7 +557,7 @@ defmodule Manfrod.Agent do
     event_ctx = %{source: source, reply_to: reply_to}
 
     # Check DB health before processing - respond with error if down
-    unless Manfrod.Deployment.db_healthy?() do
+    unless Repo.healthy?() do
       Logger.error("Agent: database unavailable, cannot process message")
 
       Events.broadcast(
@@ -630,17 +632,6 @@ defmodule Manfrod.Agent do
   end
 
   @impl true
-  def handle_info(:check_post_update, state) do
-    case Manfrod.Deployment.check_updating() do
-      {:ok, commit_sha} ->
-        Logger.info("Agent restarted after update to #{commit_sha}")
-        handle_post_update(commit_sha, state)
-
-      :none ->
-        {:noreply, state}
-    end
-  end
-
   def handle_info({:flush, event_ctx}, _state) do
     Logger.info("Conversation idle timeout - triggering extraction")
 
@@ -657,28 +648,6 @@ defmodule Manfrod.Agent do
        messages: [system_message],
        flush_timer: nil
      }}
-  end
-
-  defp handle_post_update(commit_sha, state) do
-    # Restore pending messages from DB to LLM context
-    pending = Memory.get_pending_messages()
-    restored_messages = Enum.map(pending, &message_to_context/1)
-
-    new_messages = state.messages ++ restored_messages
-
-    # Clear the updating flag
-    Manfrod.Deployment.clear_updating()
-
-    # Notify via Telegram that we're back
-    event_ctx = %{source: :telegram, reply_to: nil}
-
-    update_notice =
-      "I just updated to #{String.slice(commit_sha, 0, 7)}. " <>
-        "Restored #{length(pending)} messages from our conversation."
-
-    Events.broadcast(:responding, Map.put(event_ctx, :meta, %{content: update_notice}))
-
-    {:noreply, %{state | messages: new_messages}}
   end
 
   defp message_to_context(%{role: "user", content: content}) do
