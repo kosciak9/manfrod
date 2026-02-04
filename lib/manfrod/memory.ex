@@ -14,7 +14,7 @@ defmodule Manfrod.Memory do
 
   alias Manfrod.Events
   alias Manfrod.Repo
-  alias Manfrod.Memory.{Conversation, Message, Node, Link, QueryExpander}
+  alias Manfrod.Memory.{Conversation, Message, Node, Link, QueryExpander, RecurringReminder}
 
   # Relevance threshold for filtering search results (cosine distance)
   # Lower = more strict, higher = more permissive
@@ -582,6 +582,157 @@ defmodule Manfrod.Memory do
     (nodes ++ linked)
     |> Enum.uniq_by(& &1.id)
     |> Enum.take(max)
+  end
+
+  # --- Recurring Reminders ---
+
+  @doc """
+  List recurring reminders.
+
+  ## Options
+
+    * `:enabled` - Filter by enabled status (true/false). Default: all.
+    * `:preload` - Preload associations. Default: [:node].
+  """
+  def list_recurring_reminders(opts \\ []) do
+    query =
+      case Keyword.get(opts, :enabled) do
+        nil -> from(r in RecurringReminder)
+        enabled -> from(r in RecurringReminder, where: r.enabled == ^enabled)
+      end
+
+    preload = Keyword.get(opts, :preload, [:node])
+
+    query
+    |> order_by([r], asc: r.name)
+    |> preload(^preload)
+    |> Repo.all()
+  end
+
+  @doc """
+  Get a recurring reminder by ID with node preloaded.
+  """
+  def get_recurring_reminder(id) do
+    RecurringReminder
+    |> where([r], r.id == ^id)
+    |> preload(:node)
+    |> Repo.one()
+  end
+
+  @doc """
+  Get a recurring reminder by name with node preloaded.
+  """
+  def get_recurring_reminder_by_name(name) do
+    RecurringReminder
+    |> where([r], r.name == ^name)
+    |> preload(:node)
+    |> Repo.one()
+  end
+
+  @doc """
+  Create a recurring reminder.
+
+  Expects attrs with :name, :cron, and :node_id.
+  Optional: :timezone (default "Europe/Warsaw"), :enabled (default true).
+  """
+  def create_recurring_reminder(attrs) do
+    result =
+      %RecurringReminder{}
+      |> RecurringReminder.changeset(attrs)
+      |> Repo.insert()
+
+    case result do
+      {:ok, reminder} ->
+        Events.broadcast(:recurring_reminder_created, %{
+          source: :memory,
+          meta: %{reminder_id: reminder.id, name: reminder.name}
+        })
+
+        {:ok, Repo.preload(reminder, :node)}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Update a recurring reminder.
+
+  If the cron expression changes, all pending Oban jobs for this reminder
+  are cancelled so the SchedulerWorker can reschedule with the new pattern.
+  """
+  def update_recurring_reminder(%RecurringReminder{} = reminder, attrs) do
+    changeset = RecurringReminder.changeset(reminder, attrs)
+    cron_changed? = Ecto.Changeset.get_change(changeset, :cron) != nil
+
+    result = Repo.update(changeset)
+
+    case result do
+      {:ok, updated} ->
+        if cron_changed? do
+          cancel_pending_trigger_jobs(updated.id)
+        end
+
+        Events.broadcast(:recurring_reminder_updated, %{
+          source: :memory,
+          meta: %{reminder_id: updated.id, name: updated.name, cron_changed: cron_changed?}
+        })
+
+        {:ok, Repo.preload(updated, :node, force: true)}
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Delete a recurring reminder.
+
+  Accepts either a RecurringReminder struct or an ID string.
+  Cancels all pending Oban jobs for this reminder before deletion.
+  """
+  def delete_recurring_reminder(%RecurringReminder{} = reminder) do
+    cancel_pending_trigger_jobs(reminder.id)
+
+    case Repo.delete(reminder) do
+      {:ok, deleted} ->
+        Events.broadcast(:recurring_reminder_deleted, %{
+          source: :memory,
+          meta: %{reminder_id: deleted.id, name: deleted.name}
+        })
+
+        {:ok, deleted}
+
+      error ->
+        error
+    end
+  end
+
+  def delete_recurring_reminder(id) when is_binary(id) do
+    case get_recurring_reminder(id) do
+      nil -> {:error, :not_found}
+      reminder -> delete_recurring_reminder(reminder)
+    end
+  end
+
+  # Cancels all pending TriggerWorker jobs for a specific recurring reminder.
+  defp cancel_pending_trigger_jobs(reminder_id) do
+    import Ecto.Query
+
+    # Find all scheduled/available TriggerWorker jobs for this reminder
+    job_ids =
+      from(j in Oban.Job,
+        where: j.worker == "Manfrod.Workers.TriggerWorker",
+        where: j.state in ["scheduled", "available"],
+        where: fragment("?->>'recurring_reminder_id' = ?", j.args, ^reminder_id),
+        select: j.id
+      )
+      |> Repo.all()
+
+    # Cancel each job
+    Enum.each(job_ids, &Oban.cancel_job/1)
+
+    length(job_ids)
   end
 
   # --- Context Building ---

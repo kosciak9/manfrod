@@ -45,9 +45,13 @@ defmodule Manfrod.Agent do
   - create_module: Create entirely new modules
   - eval_code: Evaluate Elixir expressions
   - run_shell: Execute bash commands
-  - set_reminder: Schedule a reminder for yourself at a specific time
-  - list_reminders: See all pending reminders you have scheduled
-  - cancel_reminder: Cancel a pending reminder by its job ID
+  - set_reminder: Schedule a one-time reminder for yourself at a specific time
+  - list_reminders: See all pending one-time reminders you have scheduled
+  - cancel_reminder: Cancel a pending one-time reminder by its job ID
+  - create_recurring_reminder: Create a recurring reminder on a cron schedule, linked to a note
+  - list_recurring_reminders: See all recurring reminders with their schedules
+  - update_recurring_reminder: Modify a recurring reminder's schedule, note, or enabled status
+  - delete_recurring_reminder: Remove a recurring reminder and cancel its pending jobs
   - search_notes: Search your zettelkasten for relevant notes
   - get_note: Fetch a specific note by UUID, including linked notes
   - create_note: Add a new note to your slipbox (integrated during retrospection)
@@ -58,6 +62,10 @@ defmodule Manfrod.Agent do
   Note context is injected with each message, showing relevant notes with
   their UUIDs. Use search_notes to find more, get_note to explore
   specific notes and their connections.
+
+  Recurring reminders are linked to notes - the note content becomes your prompt
+  when the reminder fires, along with all notes linked to it. Create a note with
+  instructions first, then create the recurring reminder pointing to it.
 
   Use git for version control. Commit your changes with meaningful messages.
   If something breaks, you can rollback with git. Your branch is
@@ -171,6 +179,62 @@ defmodule Manfrod.Agent do
           id: [type: :integer, required: true, doc: "The job ID of the reminder to cancel"]
         ],
         callback: &tool_cancel_reminder/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "create_recurring_reminder",
+        description:
+          "Create a recurring reminder that triggers on a cron schedule. Requires a note to be linked - the note content becomes the prompt.",
+        parameter_schema: [
+          name: [
+            type: :string,
+            required: true,
+            doc: "Unique identifier for the reminder (e.g., 'morning_brief', 'weekly_review')"
+          ],
+          cron: [
+            type: :string,
+            required: true,
+            doc:
+              "Cron expression (5 fields: minute hour day-of-month month day-of-week). Examples: '0 8 * * *' (daily at 8:00), '0 9 * * 1' (Mondays at 9:00)"
+          ],
+          node_id: [
+            type: :string,
+            required: true,
+            doc: "UUID of the note containing instructions for this reminder"
+          ],
+          timezone: [
+            type: :string,
+            doc: "IANA timezone (default: 'Europe/Warsaw'). Examples: 'UTC', 'America/New_York'"
+          ]
+        ],
+        callback: &tool_create_recurring_reminder/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "list_recurring_reminders",
+        description: "List all recurring reminders with their schedules and linked notes.",
+        parameter_schema: [],
+        callback: &tool_list_recurring_reminders/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "update_recurring_reminder",
+        description:
+          "Update a recurring reminder. Can change cron schedule, linked note, timezone, or enabled status.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "UUID of the recurring reminder to update"],
+          cron: [type: :string, doc: "New cron expression"],
+          node_id: [type: :string, doc: "UUID of new note to link"],
+          timezone: [type: :string, doc: "New timezone"],
+          enabled: [type: :boolean, doc: "Enable/disable the reminder"]
+        ],
+        callback: &tool_update_recurring_reminder/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "delete_recurring_reminder",
+        description:
+          "Delete a recurring reminder. All pending scheduled jobs for this reminder are cancelled.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "UUID of the recurring reminder to delete"]
+        ],
+        callback: &tool_delete_recurring_reminder/1
       ),
       ReqLLM.Tool.new!(
         name: "search_notes",
@@ -393,6 +457,89 @@ defmodule Manfrod.Agent do
     # Oban.cancel_job/1 always returns :ok (idempotent)
     :ok = Oban.cancel_job(job_id)
     {:ok, "Reminder ##{job_id} cancelled."}
+  end
+
+  def tool_create_recurring_reminder(args) do
+    attrs = %{
+      name: args.name,
+      cron: args.cron,
+      node_id: args.node_id,
+      timezone: Map.get(args, :timezone, "Europe/Warsaw")
+    }
+
+    case Memory.create_recurring_reminder(attrs) do
+      {:ok, reminder} ->
+        {:ok,
+         "Created recurring reminder '#{reminder.name}' with cron '#{reminder.cron}' (#{reminder.timezone}). Linked to note: #{reminder.node_id}"}
+
+      {:error, changeset} ->
+        errors =
+          Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+            Enum.reduce(opts, msg, fn {key, value}, acc ->
+              String.replace(acc, "%{#{key}}", to_string(value))
+            end)
+          end)
+
+        {:ok, "Failed to create recurring reminder: #{inspect(errors)}"}
+    end
+  end
+
+  def tool_list_recurring_reminders(_args) do
+    reminders = Memory.list_recurring_reminders()
+
+    if Enum.empty?(reminders) do
+      {:ok, "No recurring reminders configured."}
+    else
+      lines =
+        Enum.map(reminders, fn r ->
+          status = if r.enabled, do: "enabled", else: "disabled"
+          note_preview = String.slice(r.node.content || "", 0, 50)
+
+          "• #{r.name} (#{r.id})\n  Cron: #{r.cron} (#{r.timezone})\n  Status: #{status}\n  Note: [#{r.node_id}] #{note_preview}..."
+        end)
+
+      {:ok, "Recurring reminders:\n\n#{Enum.join(lines, "\n\n")}"}
+    end
+  end
+
+  def tool_update_recurring_reminder(%{id: id} = args) do
+    case Memory.get_recurring_reminder(id) do
+      nil ->
+        {:ok, "Recurring reminder not found: #{id}"}
+
+      reminder ->
+        # Build attrs from provided fields only
+        attrs =
+          args
+          |> Map.drop([:id])
+          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+          |> Map.new()
+
+        case Memory.update_recurring_reminder(reminder, attrs) do
+          {:ok, updated} ->
+            {:ok, "Updated recurring reminder '#{updated.name}'"}
+
+          {:error, changeset} ->
+            errors =
+              Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+                Enum.reduce(opts, msg, fn {key, value}, acc ->
+                  String.replace(acc, "%{#{key}}", to_string(value))
+                end)
+              end)
+
+            {:ok, "Failed to update recurring reminder: #{inspect(errors)}"}
+        end
+    end
+  end
+
+  def tool_delete_recurring_reminder(%{id: id}) do
+    case Memory.delete_recurring_reminder(id) do
+      {:ok, reminder} ->
+        {:ok, "Deleted recurring reminder '#{reminder.name}' and cancelled all pending jobs."}
+
+      {:error, :not_found} ->
+        {:ok, "Recurring reminder not found: #{id}"}
+    end
   end
 
   def tool_search_notes(%{query: query}) do

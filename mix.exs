@@ -42,6 +42,7 @@ defmodule Manfrod.MixProject do
       {:paradex, "~> 0.4"},
       {:earmark, "~> 1.4"},
       {:oban, "~> 2.20"},
+      {:crontab, "~> 1.1"},
       {:tzdata, "~> 1.1"},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:mox, "~> 1.0", only: :test}
