@@ -29,22 +29,17 @@ defmodule Manfrod.Agent do
 
   require Logger
 
-  alias Manfrod.Code
+  alias Manfrod.Agent.Init
   alias Manfrod.Events
   alias Manfrod.LLM
   alias Manfrod.Memory
   alias Manfrod.Memory.Soul
-  alias Manfrod.Shell
   alias Manfrod.Telegram.TypingRefresher
+  alias Manfrod.Voyage
+  alias Manfrod.Workers.TriggerWorker
 
   @system_prompt """
-  Your capabilities:
-  - list_modules: See all loaded Elixir modules
-  - read_source: Read the source code of any module (including yourself)
-  - write_source: Modify any module's source code and hot-reload it
-  - create_module: Create entirely new modules
-  - eval_code: Evaluate Elixir expressions
-  - run_shell: Execute bash commands
+  ## Your Capabilities
   - set_reminder: Schedule a one-time reminder for yourself at a specific time
   - list_reminders: See all pending one-time reminders you have scheduled
   - cancel_reminder: Cancel a pending one-time reminder by its job ID
@@ -66,92 +61,11 @@ defmodule Manfrod.Agent do
   Recurring reminders are linked to notes - the note content becomes your prompt
   when the reminder fires, along with all notes linked to it. Create a note with
   instructions first, then create the recurring reminder pointing to it.
-
-  Use git for version control. Commit your changes with meaningful messages.
-  If something breaks, you can rollback with git. Your branch is
-  `local-customisations`, you should commit to that branch and rebase it on
-  top of the upstream `main` branch.
-
-  Self-update (two-phase process):
-  1. Run `./scripts/update.sh` - pulls code, compiles, runs migrations.
-     If compilation fails, the script rolls back automatically.
-     On success, it prints "Update compiled successfully" and the next step.
-  2. Tell the user the update is ready, then run `sudo systemctl restart manfrod`.
-     You will die and restart with the new code. Your conversation context
-     will be restored from the database automatically.
   """
 
   # Tool definitions are created at runtime to avoid compile-time validation issues
   defp tools do
     [
-      ReqLLM.Tool.new!(
-        name: "list_modules",
-        description: "List all loaded Elixir modules in the system. Returns module names.",
-        parameter_schema: [
-          filter: [type: :string, doc: "Optional filter - 'manfrod' to list only Manfrod modules"]
-        ],
-        callback: &tool_list_modules/1
-      ),
-      ReqLLM.Tool.new!(
-        name: "read_source",
-        description:
-          "Read the source code of an Elixir module. Use this to understand how things work.",
-        parameter_schema: [
-          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Agent'"]
-        ],
-        callback: &tool_read_source/1
-      ),
-      ReqLLM.Tool.new!(
-        name: "write_source",
-        description:
-          "Write new source code for a module and hot-reload it. The module will be immediately updated in the running system.",
-        parameter_schema: [
-          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Agent'"],
-          source: [
-            type: :string,
-            required: true,
-            doc: "Complete Elixir source code for the module"
-          ]
-        ],
-        callback: &tool_write_source/1
-      ),
-      ReqLLM.Tool.new!(
-        name: "create_module",
-        description:
-          "Create a new Elixir module. The file will be created and the module compiled.",
-        parameter_schema: [
-          module: [
-            type: :string,
-            required: true,
-            doc: "Module name, e.g., 'Manfrod.Skills.Weather'"
-          ],
-          source: [
-            type: :string,
-            required: true,
-            doc: "Complete Elixir source code for the module"
-          ]
-        ],
-        callback: &tool_create_module/1
-      ),
-      ReqLLM.Tool.new!(
-        name: "eval_code",
-        description:
-          "Evaluate an Elixir expression and return the result. Use for quick computations or inspecting state.",
-        parameter_schema: [
-          code: [type: :string, required: true, doc: "Elixir expression to evaluate"]
-        ],
-        callback: &tool_eval_code/1
-      ),
-      ReqLLM.Tool.new!(
-        name: "run_shell",
-        description:
-          "Execute a bash command on the host system. Use for git, apt, file operations, etc.",
-        parameter_schema: [
-          command: [type: :string, required: true, doc: "Bash command to execute"],
-          timeout: [type: :integer, doc: "Timeout in milliseconds (default: 30000)"]
-        ],
-        callback: &tool_run_shell/1
-      ),
       ReqLLM.Tool.new!(
         name: "set_reminder",
         description:
@@ -343,89 +257,19 @@ defmodule Manfrod.Agent do
 
   # Tool callbacks (called by ReqLLM when LLM invokes tools)
 
-  def tool_list_modules(%{filter: "manfrod"}) do
-    modules = Code.list_manfrod()
-    {:ok, "Manfrod modules:\n#{Enum.join(modules, "\n")}"}
-  end
-
-  def tool_list_modules(_args) do
-    modules = Code.list_manfrod()
-
-    {:ok,
-     "Manfrod modules (#{length(modules)}):\n#{Enum.join(modules, "\n")}\n\nUse filter: 'manfrod' for just Manfrod modules, or call without filter to see all #{length(Code.list())} modules."}
-  end
-
-  def tool_read_source(%{module: module_name}) do
-    module = String.to_atom("Elixir.#{module_name}")
-
-    case Code.source(module) do
-      {:ok, source} -> {:ok, source}
-      {:error, :not_found} -> {:ok, "Module #{module_name} source not found on disk"}
-      {:error, reason} -> {:ok, "Error reading source: #{inspect(reason)}"}
-    end
-  end
-
-  def tool_write_source(%{module: module_name, source: source}) do
-    module = String.to_atom("Elixir.#{module_name}")
-
-    case Code.write(module, source) do
-      {:ok, ^module} -> {:ok, "Successfully updated and reloaded #{module_name}"}
-      {:ok, actual} -> {:ok, "Updated module (compiled as #{actual})"}
-      {:error, reason} -> {:ok, "Compilation error: #{reason}"}
-    end
-  end
-
-  def tool_create_module(%{module: module_name, source: source}) do
-    module = String.to_atom("Elixir.#{module_name}")
-
-    case Code.create(module, source) do
-      {:ok, ^module} -> {:ok, "Successfully created #{module_name}"}
-      {:ok, actual} -> {:ok, "Created module (compiled as #{actual})"}
-      {:error, reason} -> {:ok, "Error creating module: #{reason}"}
-    end
-  end
-
-  def tool_eval_code(%{code: code}) do
-    case Code.eval(code) do
-      {:ok, result} -> {:ok, "Result: #{inspect(result, pretty: true, limit: 50)}"}
-      {:error, reason} -> {:ok, "Evaluation error: #{reason}"}
-    end
-  end
-
-  def tool_run_shell(%{command: command} = args) do
-    timeout = Map.get(args, :timeout, 30_000)
-
-    case Shell.run(command, timeout: timeout) do
-      {:ok, output, 0} -> {:ok, "Exit 0:\n#{output}"}
-      {:ok, output, code} -> {:ok, "Exit #{code}:\n#{output}"}
-      {:error, reason} -> {:ok, "Shell error: #{reason}"}
-    end
-  end
-
   def tool_set_reminder(%{message: message, at: at_string}) do
-    alias Manfrod.Workers.TriggerWorker
-
-    case DateTime.from_iso8601(at_string) do
-      {:ok, scheduled_at, _offset} ->
-        if DateTime.compare(scheduled_at, DateTime.utc_now()) == :gt do
-          args = %{
-            prompt: "[Reminder] #{message}",
-            trigger_id: "reminder_#{:erlang.phash2({message, scheduled_at})}"
-          }
-
-          case TriggerWorker.new(args, scheduled_at: scheduled_at) |> Oban.insert() do
-            {:ok, job} ->
-              {:ok, "Reminder set (job ##{job.id}) for #{scheduled_at}: #{message}"}
-
-            {:error, reason} ->
-              {:ok, "Failed to set reminder: #{inspect(reason)}"}
-          end
-        else
-          {:ok, "Cannot set reminder in the past. Provide a future datetime."}
-        end
-
-      {:error, _} ->
-        {:ok, "Invalid datetime. Use ISO8601 UTC like '2026-02-04T14:00:00Z'"}
+    with {:ok, scheduled_at, _offset} <- DateTime.from_iso8601(at_string),
+         :gt <- DateTime.compare(scheduled_at, DateTime.utc_now()),
+         args = %{
+           prompt: "[Reminder] #{message}",
+           trigger_id: "reminder_#{:erlang.phash2({message, scheduled_at})}"
+         },
+         {:ok, job} <- TriggerWorker.new(args, scheduled_at: scheduled_at) |> Oban.insert() do
+      {:ok, "Reminder set (job ##{job.id}) for #{scheduled_at}: #{message}"}
+    else
+      {:error, _} -> {:ok, "Invalid datetime. Use ISO8601 UTC like '2026-02-04T14:00:00Z'"}
+      :lt -> {:ok, "Cannot set reminder in the past. Provide a future datetime."}
+      :eq -> {:ok, "Cannot set reminder in the past. Provide a future datetime."}
     end
   end
 
@@ -595,7 +439,7 @@ defmodule Manfrod.Agent do
   end
 
   def tool_create_note(%{content: content}) do
-    case Manfrod.Voyage.embed_query(content) do
+    case Voyage.embed_query(content) do
       {:ok, embedding} ->
         # Create in slipbox (processed_at: nil) - Retrospector will integrate
         case Memory.create_node(%{content: content, embedding: embedding}) do
@@ -661,10 +505,19 @@ defmodule Manfrod.Agent do
   end
 
   defp build_system_prompt do
-    if Manfrod.Deployment.db_healthy?() and Memory.has_soul?() do
-      @system_prompt
-    else
-      @system_prompt <> Soul.base_prompt()
+    context =
+      if Manfrod.Deployment.db_healthy?() do
+        Init.build_system_prompt(
+          include_events: false,
+          include_git: false,
+          include_samples: false
+        )
+      end
+
+    case context do
+      nil -> @system_prompt <> Soul.base_prompt()
+      "" -> @system_prompt <> Soul.base_prompt()
+      ctx -> ctx <> "\n\n" <> @system_prompt
     end
   end
 
@@ -974,15 +827,24 @@ defmodule Manfrod.Agent do
   defp get_note_context(query) do
     soul = Memory.get_soul()
 
+    # Get notes linked to soul (workspace notes like Builder Log, etc.)
+    linked_to_soul =
+      if soul do
+        Memory.get_node_links(soul.id)
+      else
+        []
+      end
+
+    # Semantic search for relevant notes based on user query
     relevant =
       case Memory.search(query, limit: 10) do
         {:ok, nodes} -> nodes
         _ -> []
       end
 
-    # Combine soul + relevant, deduplicated (soul may appear in search results)
+    # Combine soul + linked + relevant, deduplicated
     nodes =
-      [soul | relevant]
+      ([soul] ++ linked_to_soul ++ relevant)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq_by(& &1.id)
 

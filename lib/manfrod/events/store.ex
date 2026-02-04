@@ -23,6 +23,38 @@ defmodule Manfrod.Events.Store do
   end
 
   @doc """
+  Get audit events since a given timestamp, ordered chronologically.
+
+  Options:
+  - `:limit` - max events to return (default: 100)
+  - `:types` - list of event types to filter (default: all)
+
+  Returns a list of Activity structs.
+  """
+  def get_events_since(timestamp, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+    types = Keyword.get(opts, :types, nil)
+
+    query =
+      AuditEvent
+      |> where([e], e.timestamp > ^timestamp)
+      |> order_by([e], asc: e.timestamp)
+      |> limit(^limit)
+
+    query =
+      if types do
+        type_strings = Enum.map(types, &to_string/1)
+        where(query, [e], e.type in ^type_strings)
+      else
+        query
+      end
+
+    query
+    |> Repo.all()
+    |> Enum.map(&AuditEvent.to_activity/1)
+  end
+
+  @doc """
   List recent audit events, ordered by timestamp descending.
 
   Returns a list of Activity structs for compatibility with AuditLive.

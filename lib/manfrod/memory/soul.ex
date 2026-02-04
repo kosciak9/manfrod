@@ -54,6 +54,22 @@ defmodule Manfrod.Memory.Soul do
 
   Your system will extract this information into a node as your "entry point" -
   the "soul".
+
+  ---
+
+  WORKSPACE SETUP: After establishing your soul, create these workspace notes and
+  link them to your soul node. These are anchor points for agent activity logs:
+
+  1. Create a note: "Builder Log - Index of Builder agent session logs. Builder
+     links timestamped session notes here after each run."
+     Link it to your soul.
+
+  2. Create a note: "Retrospector Log - Index of Retrospector agent session logs.
+     Retrospector links timestamped session notes here after each run."
+     Link it to your soul.
+
+  These logs help you understand what your background agents have been doing.
+  Builder improves the codebase, Retrospector maintains the knowledge graph.
   """
 
   @doc """
