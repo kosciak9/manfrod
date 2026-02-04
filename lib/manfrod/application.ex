@@ -25,6 +25,9 @@ defmodule Manfrod.Application do
     # Add logger handler after PubSub is running
     add_log_handler()
 
+    # Register Telegram bot commands with API (so they appear in UI menu)
+    Manfrod.Telegram.Commands.register()
+
     result
   end
 

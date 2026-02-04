@@ -38,8 +38,8 @@ defmodule Manfrod.Telegram.Bot do
 
       Commands:
       /start - Start the bot
-      /help - Show this help
-      /idle - Close conversation and save notes
+      /help - Show available commands
+      /idle - Clear context and save notes (auto-triggers after inactivity)
       """)
     else
       log_blocked(message, "/help")
