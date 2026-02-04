@@ -505,19 +505,25 @@ defmodule Manfrod.Agent do
   end
 
   defp build_system_prompt do
-    context =
-      if Manfrod.Deployment.db_healthy?() do
+    unless Manfrod.Deployment.db_healthy?() do
+      @system_prompt <> Soul.base_prompt()
+    else
+      context =
         Init.build_system_prompt(
           include_events: false,
           include_git: false,
           include_samples: false
         )
-      end
 
-    case context do
-      nil -> @system_prompt <> Soul.base_prompt()
-      "" -> @system_prompt <> Soul.base_prompt()
-      ctx -> ctx <> "\n\n" <> @system_prompt
+      soul = Memory.get_soul()
+
+      if soul do
+        # Soul exists - use context (which includes soul) + capabilities
+        context <> "\n\n" <> @system_prompt
+      else
+        # No soul yet - trigger onboarding flow
+        context <> "\n\n" <> @system_prompt <> Soul.base_prompt()
+      end
     end
   end
 
