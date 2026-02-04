@@ -41,7 +41,10 @@ defmodule Manfrod.Workers.SchedulerWorker do
         count ->
           args = %{
             trigger_id: Atom.to_string(trigger.id),
-            prompt: trigger.prompt
+            prompt: trigger.prompt,
+            # scheduled_at is included in args for uniqueness checking.
+            # Oban's unique keys refer to args fields, not job fields.
+            scheduled_at: DateTime.to_iso8601(scheduled_at)
           }
 
           case TriggerWorker.new(args,
