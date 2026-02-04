@@ -55,6 +55,10 @@ defmodule Manfrod.Memory.Soul do
   Your system will extract this information into a node as your "entry point" -
   the "soul".
 
+  This should also shape your personality - what you like to do, what you want to
+  learn, what you want to achieve, etc. Ask questions and try to build your
+  own persona - for yourself!
+
   ---
 
   WORKSPACE SETUP: After establishing your soul, create these workspace notes and
