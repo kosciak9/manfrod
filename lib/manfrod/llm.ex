@@ -57,6 +57,10 @@ defmodule Manfrod.LLM do
     openrouter: %{
       base_url: "https://openrouter.ai/api/v1",
       api_key_config: :openrouter_api_key
+    },
+    groq: %{
+      base_url: "https://api.groq.com/openai/v1",
+      api_key_config: :groq_api_key
     }
   }
 

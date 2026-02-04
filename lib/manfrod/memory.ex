@@ -14,6 +14,7 @@ defmodule Manfrod.Memory do
 
   alias Manfrod.Events
   alias Manfrod.Repo
+  alias Manfrod.Voyage
   alias Manfrod.Memory.{Conversation, Message, Node, Link, QueryExpander, RecurringReminder}
 
   # Relevance threshold for filtering search results (cosine distance)
@@ -386,13 +387,14 @@ defmodule Manfrod.Memory do
   # --- Hybrid Search with Query Expansion ---
 
   @doc """
-  Hybrid retrieval with query expansion.
+  Hybrid retrieval with query expansion and reranking.
 
   1. Expands the query into multiple search queries using LLM
   2. Runs vector + BM25 search for each expanded query in parallel
   3. Merges results using Reciprocal Rank Fusion (RRF)
-  4. Filters by relevance threshold
-  5. Expands with 1-hop links
+  4. Reranks top candidates using Voyage reranker
+  5. Filters by relevance threshold
+  6. Expands with 1-hop links
 
   Returns `{:ok, nodes}` where nodes is a list of Node structs.
 
@@ -400,10 +402,12 @@ defmodule Manfrod.Memory do
 
     * `:limit` - Maximum number of results (default: 10)
     * `:expand_query` - Whether to use query expansion (default: true)
+    * `:rerank` - Whether to use Voyage reranker (default: true)
   """
   def search(query_text, opts \\ []) do
     limit = Keyword.get(opts, :limit, 10)
     expand_query? = Keyword.get(opts, :expand_query, true)
+    rerank? = Keyword.get(opts, :rerank, true)
 
     # Step 1: Query expansion (always succeeds with fallback to original)
     {:ok, queries} =
@@ -438,12 +442,20 @@ defmodule Manfrod.Memory do
     # RRF merge - combine vector and BM25 results
     merged = rrf_merge([vector_results, bm25_results])
 
-    # Step 4: Filter by relevance threshold
+    # Step 4: Rerank top candidates using Voyage (if enabled and we have results)
+    reranked =
+      if rerank? and length(merged) > 1 do
+        rerank_nodes(query_text, merged, limit * 2)
+      else
+        merged
+      end
+
+    # Step 5: Filter by relevance threshold
     # Only keep nodes where at least one search returned them with good distance
     min_distances = compute_min_distances(vector_results)
 
     filtered =
-      merged
+      reranked
       |> Enum.filter(fn node ->
         case Map.get(min_distances, node.id) do
           # BM25-only results pass through
@@ -453,7 +465,7 @@ defmodule Manfrod.Memory do
       end)
       |> Enum.take(limit)
 
-    # Step 5: Expand with 1-hop links
+    # Step 6: Expand with 1-hop links
     results = expand_with_links(filtered, limit * 2)
 
     Events.broadcast(:memory_searched, %{
@@ -461,6 +473,7 @@ defmodule Manfrod.Memory do
       meta: %{
         query_preview: String.slice(query_text, 0, 100),
         expanded_queries: length(queries),
+        reranked: rerank? and length(merged) > 1,
         result_count: length(results)
       }
     })
@@ -520,6 +533,29 @@ defmodule Manfrod.Memory do
     |> Enum.reduce(%{}, fn {node, distance}, acc ->
       Map.update(acc, node.id, distance, &min(&1, distance))
     end)
+  end
+
+  # Rerank nodes using Voyage reranker
+  # Returns nodes reordered by relevance score
+  defp rerank_nodes(query, nodes, top_k) do
+    # Take top candidates for reranking (limit API call size)
+    candidates = Enum.take(nodes, top_k)
+
+    # Extract content for reranking
+    documents = Enum.map(candidates, & &1.content)
+
+    case Voyage.rerank(query, documents, top_k: top_k) do
+      {:ok, rankings} ->
+        # Rankings come as [%{index: i, relevance_score: score}, ...] sorted by score
+        # Map back to nodes in new order
+        Enum.map(rankings, fn %{index: idx} ->
+          Enum.at(candidates, idx)
+        end)
+
+      {:error, _reason} ->
+        # On reranker failure, fall back to original order
+        candidates
+    end
   end
 
   @doc """

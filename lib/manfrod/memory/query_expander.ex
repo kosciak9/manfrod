@@ -2,10 +2,9 @@ defmodule Manfrod.Memory.QueryExpander do
   @moduledoc """
   Expands user queries into multiple search queries for improved retrieval.
 
-  Uses a small, fast LLM (Liquid LFM 1.2B) to generate query variations that
-  capture different phrasings and semantic angles of the original query.
-  This improves recall in semantic search by covering vocabulary mismatches
-  between how users phrase queries and how memories are stored.
+  Uses Groq's llama-3.1-8b-instant for fast, reliable query expansion.
+  Generates query variations that capture different phrasings and semantic
+  angles of the original query, improving recall in semantic search.
 
   ## Example
 
@@ -19,7 +18,9 @@ defmodule Manfrod.Memory.QueryExpander do
 
   alias Manfrod.LLM
 
-  @model "liquid/lfm-2.5-1.2b-instruct:free"
+  # Groq with llama-3.1-8b-instant: fast, reliable, generous free tier (14.4K req/day)
+  @model "llama-3.1-8b-instant"
+  @provider :groq
 
   @system_message "You are a query expansion assistant. Rewrite search queries into multiple variations to improve retrieval. Always output valid JSON arrays only, no other text."
 
@@ -42,11 +43,11 @@ defmodule Manfrod.Memory.QueryExpander do
 
   ## Options
 
-    * `:timeout_ms` - Request timeout (default: 30_000)
+    * `:timeout_ms` - Request timeout (default: 10_000)
   """
   @spec expand(String.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def expand(query, opts \\ []) do
-    timeout_ms = Keyword.get(opts, :timeout_ms, 30_000)
+    timeout_ms = Keyword.get(opts, :timeout_ms, 10_000)
 
     prompt = String.replace(@expansion_prompt, "{{QUERY}}", query)
 
@@ -55,7 +56,11 @@ defmodule Manfrod.Memory.QueryExpander do
       ReqLLM.Context.user(prompt)
     ]
 
-    case LLM.generate_simple(@model, messages, purpose: :query_expansion, timeout_ms: timeout_ms) do
+    case LLM.generate_simple(@model, messages,
+           provider: @provider,
+           purpose: :query_expansion,
+           timeout_ms: timeout_ms
+         ) do
       {:ok, response} ->
         parse_expansion(response, query)
 

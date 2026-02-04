@@ -45,8 +45,11 @@ config :manfrod, :zen_api_key, env!("ZEN_API_KEY", :string?)
 # OpenRouter API
 config :manfrod, :openrouter_api_key, env!("OPENROUTER_API_KEY", :string?)
 
-# Voyage AI (embeddings)
+# Voyage AI (embeddings + reranking)
 config :manfrod, :voyage_api_key, env!("VOYAGE_API_KEY", :string?)
+
+# Groq API (query expansion)
+config :manfrod, :groq_api_key, env!("GROQ_API_KEY", :string?)
 
 # Telegram Bot
 config :manfrod, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
