@@ -43,8 +43,8 @@ defmodule Manfrod.LLM do
   @fallback_chain [
     # {:zen, "kimi-k2.5-free", :free},
     # {:zen, "minimax-m2.1-free", :free},
-    {:zen, "glm-4.7-free", :free},
-    {:openrouter, "openrouter/free", :free},
+    # {:zen, "glm-4.7-free", :free},
+    # {:openrouter, "openrouter/free", :free},
     {:zen, "minimax-m2.1", :paid}
   ]
 
