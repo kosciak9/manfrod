@@ -539,6 +539,7 @@ defmodule Manfrod.Agent do
     {:ok,
      %{
        messages: messages,
+       inbox: [],
        flush_timer: nil
      }}
   end
@@ -571,21 +572,10 @@ defmodule Manfrod.Agent do
     %{content: content, source: source, reply_to: reply_to} = message
     event_ctx = %{source: source, reply_to: reply_to}
 
-    # Check DB health before processing - respond with error if down
-    unless Repo.healthy?() do
-      Logger.error("Agent: database unavailable, cannot process message")
-
-      Events.broadcast(
-        :responding,
-        Map.put(event_ctx, :meta, %{
-          content: "Issues with database. Need manual intervention."
-        })
-      )
-
-      {:noreply, state}
-    else
-      do_handle_message(content, event_ctx, state)
-    end
+    # Queue message and trigger loop
+    state = %{state | inbox: state.inbox ++ [{content, event_ctx}]}
+    send(self(), :loop)
+    {:noreply, state}
   end
 
   def handle_cast({:trigger_idle, event_ctx}, state) do
@@ -607,45 +597,6 @@ defmodule Manfrod.Agent do
      }}
   end
 
-  defp do_handle_message(content, event_ctx, state) do
-    %{source: source, reply_to: _reply_to} = event_ctx
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-    Logger.info("Agent received message from #{source}: #{String.slice(content, 0, 50)}...")
-
-    # Persist user message to DB
-    {:ok, _user_msg} =
-      Memory.create_message(%{
-        role: "user",
-        content: content,
-        received_at: now
-      })
-
-    # Broadcast thinking activity
-    Events.broadcast(:thinking, event_ctx)
-
-    # Process with memory context and tools
-    {response_text, new_state} = process_message(content, state, event_ctx)
-
-    # Persist assistant response to DB
-    {:ok, _assistant_msg} =
-      Memory.create_message(%{
-        role: "assistant",
-        content: response_text,
-        received_at: DateTime.utc_now() |> DateTime.truncate(:second)
-      })
-
-    # Broadcast response - handlers deliver to appropriate channel
-    Events.broadcast(:responding, Map.put(event_ctx, :meta, %{content: response_text}))
-    Logger.info("Agent broadcast response for #{source}")
-
-    # Debounce: cancel old timer, start new one
-    if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
-    timer_ref = Process.send_after(self(), {:flush, event_ctx}, @flush_delay)
-
-    {:noreply, %{new_state | flush_timer: timer_ref}}
-  end
-
   @impl true
   def handle_info({:flush, event_ctx}, _state) do
     Logger.info("Conversation idle timeout - triggering extraction")
@@ -661,8 +612,76 @@ defmodule Manfrod.Agent do
     {:noreply,
      %{
        messages: [system_message],
+       inbox: [],
        flush_timer: nil
      }}
+  end
+
+  # Loop: nothing to do
+  def handle_info(:loop, %{inbox: []} = state) do
+    {:noreply, state}
+  end
+
+  # Loop: drain inbox, start LLM call
+  def handle_info(:loop, state) do
+    # Check DB health before processing
+    unless Repo.healthy?() do
+      Logger.error("Agent: database unavailable, cannot process message")
+      # Get last event_ctx for error response
+      {_content, event_ctx} = List.last(state.inbox)
+
+      Events.broadcast(
+        :responding,
+        Map.put(event_ctx, :meta, %{
+          content: "Issues with database. Need manual intervention."
+        })
+      )
+
+      {:noreply, %{state | inbox: []}}
+    else
+      {messages, event_ctx, state} = drain_inbox(state)
+      Events.broadcast(:thinking, event_ctx)
+
+      # Start typing refresher
+      {:ok, refresher_pid} = TypingRefresher.start(event_ctx)
+
+      send(self(), {:call_llm, event_ctx, 0, refresher_pid})
+      {:noreply, %{state | messages: messages}}
+    end
+  end
+
+  # LLM call: iteration limit
+  def handle_info({:call_llm, _ctx, iter, refresher_pid}, state) when iter >= 50 do
+    TypingRefresher.stop(refresher_pid)
+    Logger.error("Agent: max tool iterations reached")
+    send(self(), :loop)
+    {:noreply, state}
+  end
+
+  # LLM call: check for interrupt, then call LLM
+  def handle_info({:call_llm, ctx, iter, refresher_pid}, state) do
+    if state.inbox != [] do
+      # Interrupted by new messages
+      TypingRefresher.stop(refresher_pid)
+      Logger.info("Agent: interrupted by new message(s)")
+      Events.broadcast(:interrupted, ctx)
+      send(self(), :loop)
+      {:noreply, state}
+    else
+      case LLM.generate_text(state.messages, tools: tools(), purpose: :agent) do
+        {:ok, response} ->
+          handle_llm_response(response, ctx, iter, refresher_pid, state)
+
+        {:error, reason} ->
+          TypingRefresher.stop(refresher_pid)
+          Logger.error("LLM call failed: #{inspect(reason)}")
+          error_text = "Sorry, I encountered an error: #{inspect(reason)}"
+
+          Events.broadcast(:responding, Map.put(ctx, :meta, %{content: error_text}))
+          send(self(), :loop)
+          {:noreply, state}
+      end
+    end
   end
 
   defp message_to_context(%{role: "user", content: content}) do
@@ -675,122 +694,130 @@ defmodule Manfrod.Agent do
 
   # Private
 
-  defp process_message(text, state, event_ctx) do
-    # Retrieve relevant note context
-    note_context = get_note_context(text)
+  # Drain all messages from inbox, persist to DB, build LLM context
+  defp drain_inbox(state) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    # Build user message with note context prepended
-    user_content =
-      if note_context == "" do
-        text
-      else
-        "[Note context]\n#{note_context}\n\n[User message]\n#{text}"
-      end
+    # Build user messages with note context, persist each to DB
+    {user_messages, _} =
+      Enum.map_reduce(state.inbox, nil, fn {content, event_ctx}, _acc ->
+        # Persist user message to DB
+        {:ok, _user_msg} =
+          Memory.create_message(%{
+            role: "user",
+            content: content,
+            received_at: now
+          })
 
-    user_message = ReqLLM.Context.user(user_content)
-    messages = state.messages ++ [user_message]
+        # Retrieve relevant note context
+        note_context = get_note_context(content)
 
-    # Call LLM with tools, handle tool loop
-    case call_llm_with_tools(messages, event_ctx) do
-      {:ok, response_text, _final_messages} ->
-        # Store original user message (without note context) for clean history
-        clean_user_message = ReqLLM.Context.user(text)
-        assistant_message = ReqLLM.Context.assistant(response_text)
-        new_messages = state.messages ++ [clean_user_message, assistant_message]
-        {response_text, %{state | messages: new_messages}}
-
-      {:error, reason} ->
-        error_text = "Sorry, I encountered an error: #{inspect(reason)}"
-        Logger.error("LLM call failed: #{inspect(reason)}")
-        {error_text, state}
-    end
-  end
-
-  defp call_llm_with_tools(messages, event_ctx) do
-    # Start typing refresher to keep Telegram indicator alive during LLM retries/fallbacks
-    {:ok, refresher_pid} = TypingRefresher.start(event_ctx)
-
-    try do
-      do_call_llm_with_tools(messages, event_ctx, 0)
-    after
-      TypingRefresher.stop(refresher_pid)
-    end
-  end
-
-  defp do_call_llm_with_tools(messages, event_ctx, iteration) do
-    # Prevent infinite tool loops
-    if iteration > 50 do
-      {:error, :max_tool_iterations}
-    else
-      case LLM.generate_text(messages, tools: tools(), purpose: :agent) do
-        {:ok, response} ->
-          case ReqLLM.Response.finish_reason(response) do
-            :tool_calls ->
-              # Execute tools and continue conversation
-              tool_calls = ReqLLM.Response.tool_calls(response)
-              Logger.info("Agent executing #{length(tool_calls)} tool(s)")
-
-              # Extract any narrative text the LLM sent alongside tool calls
-              narrative_text = ReqLLM.Response.text(response) || ""
-
-              if narrative_text != "" do
-                Events.broadcast(:narrating, Map.put(event_ctx, :meta, %{text: narrative_text}))
-              end
-
-              # Add assistant message with tool calls (include narrative text)
-              assistant_msg = ReqLLM.Context.assistant(narrative_text, tool_calls: tool_calls)
-              messages_with_assistant = messages ++ [assistant_msg]
-
-              # Execute each tool and add results
-              messages_with_results =
-                Enum.reduce(tool_calls, messages_with_assistant, fn tool_call, msgs ->
-                  action_id = generate_action_id()
-                  action_name = tool_call.function.name
-                  args = tool_call.function.arguments
-
-                  # Broadcast action started
-                  Events.broadcast(
-                    :action_started,
-                    Map.put(event_ctx, :meta, %{
-                      action_id: action_id,
-                      action: action_name,
-                      args: args
-                    })
-                  )
-
-                  # Execute and time the action
-                  {result, duration_ms, success} = timed_execute_tool(tool_call)
-
-                  # Broadcast action completed
-                  Events.broadcast(
-                    :action_completed,
-                    Map.put(event_ctx, :meta, %{
-                      action_id: action_id,
-                      action: action_name,
-                      result: truncate_result(result),
-                      duration_ms: duration_ms,
-                      success: success
-                    })
-                  )
-
-                  tool_result_msg =
-                    ReqLLM.Context.tool_result(tool_call.id, action_name, result)
-
-                  msgs ++ [tool_result_msg]
-                end)
-
-              # Continue the conversation
-              do_call_llm_with_tools(messages_with_results, event_ctx, iteration + 1)
-
-            _other ->
-              # No more tools, return final text
-              text = ReqLLM.Response.text(response) || ""
-              {:ok, text, messages}
+        # Build user message with note context prepended for LLM
+        user_content =
+          if note_context == "" do
+            content
+          else
+            "[Note context]\n#{note_context}\n\n[User message]\n#{content}"
           end
 
-        {:error, _} = error ->
-          error
-      end
+        {ReqLLM.Context.user(user_content), event_ctx}
+      end)
+
+    # Get the last event_ctx for responses
+    {_content, last_ctx} = List.last(state.inbox)
+
+    messages = state.messages ++ user_messages
+    {messages, last_ctx, %{state | inbox: []}}
+  end
+
+  # Handle LLM response - either tool calls or final response
+  defp handle_llm_response(response, ctx, iter, refresher_pid, state) do
+    case ReqLLM.Response.finish_reason(response) do
+      :tool_calls ->
+        # Execute tools and continue conversation
+        tool_calls = ReqLLM.Response.tool_calls(response)
+        Logger.info("Agent executing #{length(tool_calls)} tool(s)")
+
+        # Extract any narrative text the LLM sent alongside tool calls
+        narrative_text = ReqLLM.Response.text(response) || ""
+
+        if narrative_text != "" do
+          Events.broadcast(:narrating, Map.put(ctx, :meta, %{text: narrative_text}))
+        end
+
+        # Add assistant message with tool calls
+        assistant_msg = ReqLLM.Context.assistant(narrative_text, tool_calls: tool_calls)
+        messages = state.messages ++ [assistant_msg]
+
+        # Execute each tool and add results
+        messages_with_results =
+          Enum.reduce(tool_calls, messages, fn tool_call, msgs ->
+            action_id = generate_action_id()
+            action_name = tool_call.function.name
+            args = tool_call.function.arguments
+
+            # Broadcast action started
+            Events.broadcast(
+              :action_started,
+              Map.put(ctx, :meta, %{
+                action_id: action_id,
+                action: action_name,
+                args: args
+              })
+            )
+
+            # Execute and time the action
+            {result, duration_ms, success} = timed_execute_tool(tool_call)
+
+            # Broadcast action completed
+            Events.broadcast(
+              :action_completed,
+              Map.put(ctx, :meta, %{
+                action_id: action_id,
+                action: action_name,
+                result: truncate_result(result),
+                duration_ms: duration_ms,
+                success: success
+              })
+            )
+
+            tool_result_msg = ReqLLM.Context.tool_result(tool_call.id, action_name, result)
+            msgs ++ [tool_result_msg]
+          end)
+
+        # Continue the loop
+        send(self(), {:call_llm, ctx, iter + 1, refresher_pid})
+        {:noreply, %{state | messages: messages_with_results}}
+
+      _other ->
+        # Final response - stop typing, persist, broadcast
+        TypingRefresher.stop(refresher_pid)
+
+        response_text = ReqLLM.Response.text(response) || ""
+
+        # Persist assistant response to DB
+        {:ok, _assistant_msg} =
+          Memory.create_message(%{
+            role: "assistant",
+            content: response_text,
+            received_at: DateTime.utc_now() |> DateTime.truncate(:second)
+          })
+
+        # Add to conversation history
+        assistant_msg = ReqLLM.Context.assistant(response_text)
+        messages = state.messages ++ [assistant_msg]
+
+        # Broadcast response
+        Events.broadcast(:responding, Map.put(ctx, :meta, %{content: response_text}))
+        Logger.info("Agent broadcast response for #{ctx.source}")
+
+        # Debounce flush timer
+        if state.flush_timer, do: Process.cancel_timer(state.flush_timer)
+        timer_ref = Process.send_after(self(), {:flush, ctx}, @flush_delay)
+
+        # Check for more work
+        send(self(), :loop)
+        {:noreply, %{state | messages: messages, flush_timer: timer_ref}}
     end
   end
 

@@ -15,6 +15,7 @@ defmodule Manfrod.Events.Activity do
   - `:thinking` - message received, starting LLM call
   - `:narrating` - agent explaining what it's doing (text between tool calls)
   - `:responding` - final response ready
+  - `:interrupted` - new message arrived, restarting with fresh context
   - `:idle` - conversation timed out
 
   Logs (BEAM-wide):
@@ -63,6 +64,7 @@ defmodule Manfrod.Events.Activity do
           | :thinking
           | :narrating
           | :responding
+          | :interrupted
           | :idle
           # Logs
           | :log
