@@ -593,6 +593,7 @@ defmodule Manfrod.Agent do
     {:noreply,
      %{
        messages: [system_message],
+       inbox: [],
        flush_timer: nil
      }}
   end
