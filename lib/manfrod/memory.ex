@@ -443,11 +443,11 @@ defmodule Manfrod.Memory do
     merged = rrf_merge([vector_results, bm25_results])
 
     # Step 4: Rerank top candidates using Voyage (if enabled and we have results)
-    reranked =
+    {reranked, rerank_scores} =
       if rerank? and length(merged) > 1 do
         rerank_nodes(query_text, merged, limit * 2)
       else
-        merged
+        {merged, []}
       end
 
     # Step 5: Filter by relevance threshold
@@ -468,13 +468,25 @@ defmodule Manfrod.Memory do
     # Step 6: Expand with 1-hop links
     results = expand_with_links(filtered, limit * 2)
 
+    # Broadcast with verbose stats for logging
     Events.broadcast(:memory_searched, %{
       source: :memory,
       meta: %{
-        query_preview: String.slice(query_text, 0, 100),
-        expanded_queries: length(queries),
-        reranked: rerank? and length(merged) > 1,
-        result_count: length(results)
+        query: query_text,
+        expanded_queries: queries,
+        rerank_scores: rerank_scores,
+        stats: %{
+          vector: length(vector_results),
+          bm25: length(bm25_results),
+          merged: length(merged),
+          reranked: length(reranked),
+          filtered: length(filtered),
+          final: length(results),
+          relevance_threshold: @relevance_threshold,
+          rerank_enabled: rerank?,
+          rerank_ran: rerank? and length(merged) > 1,
+          expand_query_enabled: expand_query?
+        }
       }
     })
 
@@ -536,7 +548,7 @@ defmodule Manfrod.Memory do
   end
 
   # Rerank nodes using Voyage reranker
-  # Returns nodes reordered by relevance score
+  # Returns {reordered_nodes, rerank_scores} where rerank_scores contains scoring details
   defp rerank_nodes(query, nodes, top_k) do
     # Take top candidates for reranking (limit API call size)
     candidates = Enum.take(nodes, top_k)
@@ -547,14 +559,29 @@ defmodule Manfrod.Memory do
     case Voyage.rerank(query, documents, top_k: top_k) do
       {:ok, rankings} ->
         # Rankings come as [%{index: i, relevance_score: score}, ...] sorted by score
-        # Map back to nodes in new order
-        Enum.map(rankings, fn %{index: idx} ->
-          Enum.at(candidates, idx)
-        end)
+        # Map back to nodes in new order, preserving scores for logging
+        reordered_with_scores =
+          Enum.map(rankings, fn %{index: idx, relevance_score: score} ->
+            node = Enum.at(candidates, idx)
+            {node, score}
+          end)
+
+        reordered_nodes = Enum.map(reordered_with_scores, fn {node, _score} -> node end)
+
+        rerank_scores =
+          Enum.map(reordered_with_scores, fn {node, score} ->
+            %{
+              node_id: node.id,
+              score: score,
+              content_preview: String.slice(node.content || "", 0, 60)
+            }
+          end)
+
+        {reordered_nodes, rerank_scores}
 
       {:error, _reason} ->
-        # On reranker failure, fall back to original order
-        candidates
+        # On reranker failure, fall back to original order with empty scores
+        {candidates, []}
     end
   end
 

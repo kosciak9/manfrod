@@ -46,7 +46,7 @@ defmodule Manfrod.LLM do
     {:zen, "kimi-k2.5", :paid},
     {:zen, "minimax-m2.1-free", :free},
     {:openrouter, "openrouter/free", :free},
-    {:zen, "glm-4.7-free", :free},
+    {:zen, "glm-4.7-free", :free}
   ]
 
   # Provider configuration

@@ -587,11 +587,77 @@ defmodule ManfrodWeb.ActivityLive do
 
   # Memory events
   defp format_expanded(%Activity{type: :memory_searched, meta: meta}) do
-    """
-    Query: #{meta[:query_preview]}
-    Expanded queries: #{meta[:expanded_queries]}
-    Results: #{meta[:result_count]}
-    """
+    query = meta[:query] || meta[:query_preview] || "?"
+    expanded_queries = meta[:expanded_queries] || []
+    rerank_scores = meta[:rerank_scores] || []
+    stats = meta[:stats] || %{}
+
+    # Format expanded queries section
+    queries_section =
+      case expanded_queries do
+        queries when is_list(queries) and length(queries) > 0 ->
+          formatted =
+            queries
+            |> Enum.with_index(1)
+            |> Enum.map(fn {q, i} -> "  #{i}. #{q}" end)
+            |> Enum.join("\n")
+
+          "\nExpanded queries:\n#{formatted}"
+
+        count when is_integer(count) ->
+          "\nExpanded queries: #{count}"
+
+        _ ->
+          ""
+      end
+
+    # Format pipeline stats section
+    pipeline_section =
+      if map_size(stats) > 0 do
+        threshold = stats[:relevance_threshold] || "?"
+        filtered_out = (stats[:merged] || 0) - (stats[:filtered] || 0)
+        rerank_status = if stats[:rerank_ran], do: "yes", else: "no"
+        expand_status = if stats[:expand_query_enabled], do: "yes", else: "no"
+
+        """
+
+        Pipeline:
+          Query expansion: #{expand_status}
+          Vector search: #{stats[:vector] || 0} results
+          BM25 search: #{stats[:bm25] || 0} results
+          RRF merged: #{stats[:merged] || 0} unique
+          Reranked: #{rerank_status} (#{stats[:reranked] || 0} candidates)
+          Filtered (threshold #{threshold}): #{stats[:filtered] || 0} passed, #{filtered_out} dropped
+          Final (with links): #{stats[:final] || 0} results
+        """
+      else
+        # Fallback for old format
+        "\nResults: #{meta[:result_count] || 0}"
+      end
+
+    # Format rerank scores section
+    rerank_section =
+      if is_list(rerank_scores) and length(rerank_scores) > 0 do
+        formatted =
+          rerank_scores
+          |> Enum.map(fn score_info ->
+            score = score_info[:score] || score_info["score"] || 0
+            preview = score_info[:content_preview] || score_info["content_preview"] || ""
+
+            "  #{Float.round(score, 3) |> :erlang.float_to_binary(decimals: 3)}  \"#{preview}...\""
+          end)
+          |> Enum.join("\n")
+
+        "\nRerank scores:\n#{formatted}"
+      else
+        if stats[:rerank_ran] == false and stats[:rerank_enabled] do
+          "\nRerank scores: skipped (< 2 candidates)"
+        else
+          ""
+        end
+      end
+
+    "Query: #{query}#{queries_section}#{pipeline_section}#{rerank_section}"
   end
 
   defp format_expanded(%Activity{type: :memory_node_created, meta: meta}) do
