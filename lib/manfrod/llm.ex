@@ -42,10 +42,11 @@ defmodule Manfrod.LLM do
   # Each tuple: {provider_key, model_id, tier}
   @fallback_chain [
     {:zen, "kimi-k2.5-free", :free},
+    {:openrouter, "moonshotai/kimi-k2.5", :paid},
+    {:zen, "kimi-k2.5", :paid},
     {:zen, "minimax-m2.1-free", :free},
+    {:openrouter, "openrouter/free", :free},
     {:zen, "glm-4.7-free", :free},
-    # {:openrouter, "openrouter/free", :free},
-    {:zen, "kimi-k2.5", :paid}
   ]
 
   # Provider configuration
