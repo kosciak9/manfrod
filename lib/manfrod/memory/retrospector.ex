@@ -59,6 +59,9 @@ defmodule Manfrod.Memory.Retrospector do
   it, helping it grow in interesting directions. Log what you notice. React to
   what you find. Iterate.
 
+  Usually, try to tackle unprocessed notes and then 15 existing ones. For each
+  one search for missed connections, deduplicate, edit, consolidate.
+
   When finished, say "Done."
 
   Here is a guide on zettelkasten best practices:
@@ -365,7 +368,7 @@ defmodule Manfrod.Memory.Retrospector do
   end
 
   defp call_with_tools(messages, iteration, stats) do
-    if iteration > 20 do
+    if iteration > 150 do
       {:error, :max_iterations}
     else
       case LLM.generate_text(messages, tools: tools(), purpose: :retrospector) do
