@@ -1,12 +1,11 @@
 defmodule Manfrod.Workers.RetrospectionWorker do
   @moduledoc """
-  Oban worker that triggers retrospection every 6 hours.
+  Oban worker that triggers retrospection every hour.
   The actual work is delegated to the Retrospector agent.
   """
   use Oban.Worker,
     queue: :retrospection,
-    max_attempts: 3,
-    unique: [period: {6, :hours}, states: :incomplete]
+    max_attempts: 3
 
   require Logger
 

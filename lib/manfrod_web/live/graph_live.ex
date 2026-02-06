@@ -17,6 +17,7 @@ defmodule ManfrodWeb.GraphLive do
   def mount(_params, _session, socket) do
     graph_data = Memory.get_graph_data()
     soul = Memory.get_soul()
+    stats = Memory.graph_stats()
 
     socket =
       socket
@@ -26,6 +27,7 @@ defmodule ManfrodWeb.GraphLive do
       |> assign(filter: :all)
       |> assign(search_query: "")
       |> assign(search_results: [])
+      |> assign(stats: stats)
 
     {:ok, socket}
   end
@@ -213,9 +215,54 @@ defmodule ManfrodWeb.GraphLive do
               </button>
             </div>
 
-            <%!-- Stats --%>
-            <div class="text-zinc-500 text-xs">
-              <%= length(@graph_data.nodes) %> nodes, <%= length(@graph_data.edges) %> links
+          </div>
+
+          <%!-- Stats bar --%>
+          <div class="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+            <div class="flex items-center gap-1.5">
+              <span class="text-zinc-200 font-medium"><%= @stats.total_nodes %></span> nodes
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-zinc-200 font-medium"><%= @stats.total_links %></span> links
+            </div>
+            <div class="text-zinc-600">|</div>
+            <div class="flex items-center gap-1.5">
+              <span class={[
+                "font-medium",
+                @stats.slipbox_count > 0 && "text-amber-400",
+                @stats.slipbox_count == 0 && "text-zinc-400"
+              ]}>
+                <%= @stats.slipbox_count %>
+              </span> slipbox
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class={[
+                "font-medium",
+                @stats.orphan_count > 0 && "text-rose-400",
+                @stats.orphan_count == 0 && "text-zinc-400"
+              ]}>
+                <%= @stats.orphan_count %>
+              </span> orphans
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class={[
+                "font-medium",
+                @stats.weakly_connected_count > 0 && "text-amber-300",
+                @stats.weakly_connected_count == 0 && "text-zinc-400"
+              ]}>
+                <%= @stats.weakly_connected_count %>
+              </span> weak
+            </div>
+            <div class="text-zinc-600">|</div>
+            <div class="flex items-center gap-1.5">
+              ratio
+              <span class={[
+                "font-medium",
+                @stats.link_to_note_ratio >= 3.0 && "text-teal-400",
+                @stats.link_to_note_ratio < 3.0 && "text-zinc-300"
+              ]}>
+                <%= @stats.link_to_note_ratio %>
+              </span>
             </div>
           </div>
         </header>

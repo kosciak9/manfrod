@@ -6,6 +6,7 @@ defmodule Manfrod.Memory.Link do
   @foreign_key_type :binary_id
 
   schema "links" do
+    field :context, :string
     belongs_to :node_a, Manfrod.Memory.Node
     belongs_to :node_b, Manfrod.Memory.Node
 
@@ -18,7 +19,7 @@ defmodule Manfrod.Memory.Link do
   """
   def changeset(link, attrs) do
     link
-    |> cast(attrs, [:node_a_id, :node_b_id])
+    |> cast(attrs, [:node_a_id, :node_b_id, :context])
     |> validate_required([:node_a_id, :node_b_id])
     |> normalize_node_order()
     |> unique_constraint([:node_a_id, :node_b_id])

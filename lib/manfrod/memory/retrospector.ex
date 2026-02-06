@@ -11,11 +11,13 @@ defmodule Manfrod.Memory.Retrospector do
   - `search` - semantic + keyword search over the graph
   - `get_node` - fetch a node by ID
   - `create_node` - create a new node (returns ID)
-  - `create_link` - link two nodes by ID
+  - `update_node` - update a node's content (re-embeds, preserves links)
+  - `create_link` - link two nodes by ID (with optional context)
   - `delete_node` - delete a node and its links (for deduplication)
   - `delete_link` - delete a link between nodes
   - `list_links` - list all nodes linked to a given node (for graph exploration)
   - `mark_processed` - mark a node as integrated into the graph
+  - `graph_stats` - get graph health statistics (orphans, link ratio, etc.)
   """
 
   require Logger
@@ -34,23 +36,42 @@ defmodule Manfrod.Memory.Retrospector do
   - Unprocessed notes from recent conversations (the slipbox)
   - The existing knowledge graph (via search and list_links)
   - Tools to create nodes, create links, delete nodes, delete links, and mark notes as processed
+  - A graph_stats tool to check overall graph health
+
+  ## First Step
+
+  Always call graph_stats first. This tells you the current state of the graph:
+  how many orphans need connecting, how many weakly connected nodes need
+  strengthening, and whether the link-to-note ratio is healthy (aim for > 3.0).
 
   ## Deduplication
 
   There is a high chance you'll find duplicates in slipbox, both duplicates of
   other slipbox items and duplicates of what's already in the graph. That's
   because we extract all interesting facts from conversations without regard to
-  current contents. Your job is to keep it deduplicated. Try to remove
-  duplicates and update one note with all the information. We should keep
-  things that can be no longer as relevant, but duplicated notes clutter the
-  search a lot. Always try to consolidate similar notes.
+  current contents. Your job is to keep it deduplicated.
+
+  When consolidating duplicates, prefer update_node over delete+create:
+  1. Pick the node with more links (it's better connected)
+  2. Use update_node to merge the best content from both into that node
+  3. Delete the other node
+
+  This preserves the surviving node's ID, links, and provenance.
+
+  ## Link Context
+
+  When creating links, always provide a context explaining why the connection
+  exists. Ask yourself: "What should someone expect when following this link?"
+  Good: "Both address concurrent programming but from different angles"
+  Bad: no context, or "related" (too vague)
 
   ## Graph Gardening
 
   Don't just process the slipbox - tend to the garden. Each session, go deeper:
   - Follow links from nodes you touch to see what's connected
   - Look for clusters that could use structure notes
-  - Find orphans that deserve connections
+  - Find orphans that deserve connections - these are your top priority
+  - Strengthen weakly connected nodes (1 link) with additional connections
   - Notice patterns emerging and create new linking opportunities
   - Consolidate near-duplicates you discover while exploring
   - Let structure emerge from your observations
@@ -59,8 +80,16 @@ defmodule Manfrod.Memory.Retrospector do
   it, helping it grow in interesting directions. Log what you notice. React to
   what you find. Iterate.
 
-  Usually, try to tackle unprocessed notes and then 15 existing ones. For each
-  one search for missed connections, deduplicate, edit, consolidate.
+  The review nodes you receive are prioritized: orphans first, then weakly
+  connected, then oldest nodes, then random. Tackle unprocessed slipbox notes
+  first, then work through all the review nodes. For each one, search for
+  missed connections, deduplicate, edit, consolidate.
+
+  ## Structure Notes
+
+  When the graph reaches ~700 nodes, start creating structure notes - hub nodes
+  that organize and link clusters of related ideas. These are like tables of
+  contents for topic areas. Don't force them before the graph is ready.
 
   When finished, say "Done."
 
@@ -104,11 +133,30 @@ defmodule Manfrod.Memory.Retrospector do
         callback: &tool_create_node/1
       ),
       ReqLLM.Tool.new!(
+        name: "update_node",
+        description:
+          "Update a node's content. Use this to consolidate duplicates: merge info into one node and delete the other. Re-embeds automatically. Preserves the node's ID, links, and provenance.",
+        parameter_schema: [
+          id: [type: :string, required: true, doc: "Node UUID to update"],
+          content: [
+            type: :string,
+            required: true,
+            doc: "The new content for the node (1-2 sentences)"
+          ]
+        ],
+        callback: &tool_update_node/1
+      ),
+      ReqLLM.Tool.new!(
         name: "create_link",
-        description: "Create an undirected link between two nodes.",
+        description:
+          "Create an undirected link between two nodes. Always provide context explaining why the link exists.",
         parameter_schema: [
           node_a_id: [type: :string, required: true, doc: "First node UUID"],
-          node_b_id: [type: :string, required: true, doc: "Second node UUID"]
+          node_b_id: [type: :string, required: true, doc: "Second node UUID"],
+          context: [
+            type: :string,
+            doc: "Why this link exists - what should someone expect when following it?"
+          ]
         ],
         callback: &tool_create_link/1
       ),
@@ -147,6 +195,13 @@ defmodule Manfrod.Memory.Retrospector do
           id: [type: :string, required: true, doc: "Node UUID to get links for"]
         ],
         callback: &tool_list_links/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "graph_stats",
+        description:
+          "Get graph health statistics: total nodes, total links, slipbox count, orphan count (0 links), weakly connected count (1 link), and link-to-note ratio. Call this at the start of each session to understand graph health and prioritize work.",
+        parameter_schema: [],
+        callback: &tool_graph_stats/1
       )
     ]
   end
@@ -202,8 +257,29 @@ defmodule Manfrod.Memory.Retrospector do
     end
   end
 
-  def tool_create_link(%{node_a_id: a, node_b_id: b}) do
-    case Memory.create_link(a, b) do
+  def tool_update_node(%{id: id, content: content}) do
+    case Voyage.embed_query(content) do
+      {:ok, embedding} ->
+        case Memory.update_node(id, %{content: content, embedding: embedding}) do
+          {:ok, _node} ->
+            {:ok, "Updated node: #{id}"}
+
+          {:error, :not_found} ->
+            {:ok, "Node not found: #{id}"}
+
+          {:error, changeset} ->
+            {:ok, "Failed to update node: #{inspect(changeset.errors)}"}
+        end
+
+      {:error, reason} ->
+        {:ok, "Failed to generate embedding: #{inspect(reason)}"}
+    end
+  end
+
+  def tool_create_link(%{node_a_id: a, node_b_id: b} = args) do
+    opts = if args[:context], do: [context: args[:context]], else: []
+
+    case Memory.create_link(a, b, opts) do
       {:ok, _link} ->
         {:ok, "Linked #{a} <-> #{b}"}
 
@@ -238,18 +314,36 @@ defmodule Manfrod.Memory.Retrospector do
   end
 
   def tool_list_links(%{id: id}) do
-    linked_nodes = Memory.get_node_links(id)
+    linked = Memory.get_node_links_with_context(id)
 
-    if linked_nodes == [] do
+    if linked == [] do
       {:ok, "Node #{id} has no links (orphan)."}
     else
       result =
-        linked_nodes
-        |> Enum.map(fn n -> "- [#{n.id}] #{n.content}" end)
+        linked
+        |> Enum.map(fn {n, context} ->
+          line = "- [#{n.id}] #{n.content}"
+          if context, do: "#{line}\n  Context: #{context}", else: line
+        end)
         |> Enum.join("\n")
 
-      {:ok, "Node #{id} is linked to #{length(linked_nodes)} nodes:\n#{result}"}
+      {:ok, "Node #{id} is linked to #{length(linked)} nodes:\n#{result}"}
     end
+  end
+
+  def tool_graph_stats(_args) do
+    stats = Memory.graph_stats()
+
+    {:ok,
+     """
+     Graph Health:
+     - Total nodes: #{stats.total_nodes}
+     - Total links: #{stats.total_links}
+     - Slipbox (unprocessed): #{stats.slipbox_count}
+     - Orphans (0 links): #{stats.orphan_count}
+     - Weakly connected (1 link): #{stats.weakly_connected_count}
+     - Link-to-note ratio: #{stats.link_to_note_ratio}\
+     """}
   end
 
   # Public API
@@ -257,17 +351,18 @@ defmodule Manfrod.Memory.Retrospector do
   @doc """
   Run the retrospection agent.
 
-  Processes the slipbox (unprocessed nodes) and also reviews a random sample
-  of the existing graph for maintenance and gardening.
+  Processes the slipbox (unprocessed nodes) and reviews existing graph nodes
+  using a priority cascade: orphans first, then weakly connected, then stalest,
+  then random — filling up to the review budget.
 
   Returns :ok or {:error, reason}.
   """
   def process_slipbox(opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, 20)
-    review_size = Keyword.get(opts, :review_size, 5)
+    review_budget = Keyword.get(opts, :review_budget, 25)
 
     slipbox = Memory.get_slipbox_nodes(limit: batch_size)
-    review_sample = Memory.get_random_nodes(review_size)
+    review_sample = build_review_sample(review_budget)
 
     if slipbox == [] and review_sample == [] do
       Logger.debug("Retrospector: nothing to process (empty graph)")
@@ -279,6 +374,43 @@ defmodule Manfrod.Memory.Retrospector do
 
       run_agent(slipbox, review_sample)
     end
+  end
+
+  # Build a review sample using priority cascade:
+  # orphans → weakly connected → stalest → random
+  # Each tier fills remaining budget, deduplicating by node ID.
+  defp build_review_sample(budget) do
+    orphans = Memory.get_orphan_nodes(limit: budget)
+    seen = MapSet.new(orphans, & &1.id)
+    remaining = budget - length(orphans)
+
+    {weak, seen, remaining} =
+      if remaining > 0 do
+        nodes = Memory.get_weakly_connected_nodes(limit: remaining + MapSet.size(seen))
+        new = Enum.reject(nodes, fn n -> MapSet.member?(seen, n.id) end) |> Enum.take(remaining)
+        {new, MapSet.union(seen, MapSet.new(new, & &1.id)), remaining - length(new)}
+      else
+        {[], seen, 0}
+      end
+
+    {stale, seen, remaining} =
+      if remaining > 0 do
+        nodes = Memory.get_stalest_nodes(limit: remaining + MapSet.size(seen))
+        new = Enum.reject(nodes, fn n -> MapSet.member?(seen, n.id) end) |> Enum.take(remaining)
+        {new, MapSet.union(seen, MapSet.new(new, & &1.id)), remaining - length(new)}
+      else
+        {[], seen, 0}
+      end
+
+    random =
+      if remaining > 0 do
+        nodes = Memory.get_random_nodes(remaining + MapSet.size(seen))
+        Enum.reject(nodes, fn n -> MapSet.member?(seen, n.id) end) |> Enum.take(remaining)
+      else
+        []
+      end
+
+    orphans ++ weak ++ stale ++ random
   end
 
   # Private
@@ -301,6 +433,7 @@ defmodule Manfrod.Memory.Retrospector do
 
     case call_with_tools(messages, 0, %{
            nodes_processed: 0,
+           nodes_updated: 0,
            links_created: 0,
            insights_created: 0,
            nodes_deleted: 0,
@@ -354,11 +487,11 @@ defmodule Manfrod.Memory.Retrospector do
       else
         """
 
-        ## Graph Sample (for review)
+        ## Graph Review (prioritized: orphans → weak → stale → random)
 
-        Here are some random nodes from your existing graph. Use list_links to explore
-        their connections. Look for opportunities to improve structure, find missing
-        links, or consolidate related ideas:
+        These nodes need attention. Orphans and weakly connected nodes appear first.
+        Use list_links to explore their connections. Look for opportunities to improve
+        structure, find missing links, or consolidate related ideas:
 
         #{review_text}
         """
@@ -415,6 +548,7 @@ defmodule Manfrod.Memory.Retrospector do
   end
 
   defp update_stats(stats, "mark_processed"), do: Map.update!(stats, :nodes_processed, &(&1 + 1))
+  defp update_stats(stats, "update_node"), do: Map.update!(stats, :nodes_updated, &(&1 + 1))
   defp update_stats(stats, "create_link"), do: Map.update!(stats, :links_created, &(&1 + 1))
   defp update_stats(stats, "create_node"), do: Map.update!(stats, :insights_created, &(&1 + 1))
   defp update_stats(stats, "delete_node"), do: Map.update!(stats, :nodes_deleted, &(&1 + 1))

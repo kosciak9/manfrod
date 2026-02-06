@@ -200,6 +200,40 @@ defmodule Manfrod.Memory do
   end
 
   @doc """
+  Update a node's content and re-embed it.
+  Preserves the node's ID, links, and provenance.
+  Returns {:ok, node} or {:error, :not_found} or {:error, changeset}.
+  """
+  def update_node(node_id, attrs) do
+    case get_node(node_id) do
+      nil ->
+        {:error, :not_found}
+
+      node ->
+        result =
+          node
+          |> Node.changeset(attrs)
+          |> Repo.update()
+
+        case result do
+          {:ok, updated} ->
+            Events.broadcast(:memory_node_updated, %{
+              source: :memory,
+              meta: %{
+                node_id: updated.id,
+                content_preview: String.slice(updated.content, 0, 100)
+              }
+            })
+
+            {:ok, updated}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  @doc """
   Delete a node and all its links (cascade).
   Returns {:ok, node} or {:error, :not_found}.
   """
@@ -229,10 +263,16 @@ defmodule Manfrod.Memory do
 
   # --- Links ---
 
-  def create_link(node_a_id, node_b_id) do
+  def create_link(node_a_id, node_b_id, opts \\ []) do
+    context = Keyword.get(opts, :context)
+
+    attrs =
+      %{node_a_id: node_a_id, node_b_id: node_b_id}
+      |> then(fn a -> if context, do: Map.put(a, :context, context), else: a end)
+
     result =
       %Link{}
-      |> Link.changeset(%{node_a_id: node_a_id, node_b_id: node_b_id})
+      |> Link.changeset(attrs)
       |> Repo.insert(on_conflict: :nothing)
 
     case result do
@@ -289,6 +329,22 @@ defmodule Manfrod.Memory do
   end
 
   @doc """
+  Get all linked nodes for a given node, with link context.
+  Returns a list of `{node, context}` tuples where context may be nil.
+  """
+  def get_node_links_with_context(node_id) do
+    from(n in Node,
+      join: l in Link,
+      on:
+        (l.node_a_id == ^node_id and l.node_b_id == n.id) or
+          (l.node_b_id == ^node_id and l.node_a_id == n.id),
+      select: {n, l.context},
+      distinct: n.id
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   Get a random sample of processed nodes from the graph.
   Useful for graph review and maintenance.
   """
@@ -296,6 +352,120 @@ defmodule Manfrod.Memory do
     Node
     |> where([n], not is_nil(n.processed_at))
     |> order_by(fragment("RANDOM()"))
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
+  # --- Graph Health ---
+
+  @doc """
+  Get graph health statistics.
+
+  Returns a map with:
+    * `:total_nodes` - Total number of nodes
+    * `:total_links` - Total number of links
+    * `:slipbox_count` - Nodes not yet processed
+    * `:orphan_count` - Processed nodes with 0 links
+    * `:weakly_connected_count` - Processed nodes with exactly 1 link
+    * `:link_to_note_ratio` - Total links / total nodes (0.0 if no nodes)
+  """
+  def graph_stats do
+    total_nodes = Repo.aggregate(Node, :count)
+    total_links = Repo.aggregate(Link, :count)
+    slipbox_count = Repo.aggregate(from(n in Node, where: is_nil(n.processed_at)), :count)
+
+    # Orphans: processed nodes with 0 links
+    orphan_count =
+      from(n in Node,
+        where: not is_nil(n.processed_at),
+        left_join: la in Link,
+        on: la.node_a_id == n.id,
+        left_join: lb in Link,
+        on: lb.node_b_id == n.id,
+        where: is_nil(la.id) and is_nil(lb.id),
+        select: count(n.id)
+      )
+      |> Repo.one()
+
+    # Weakly connected: processed nodes with exactly 1 link
+    weakly_connected_count =
+      from(n in Node,
+        where: not is_nil(n.processed_at),
+        left_join: la in Link,
+        on: la.node_a_id == n.id,
+        left_join: lb in Link,
+        on: lb.node_b_id == n.id,
+        group_by: n.id,
+        having: count(la.id, :distinct) + count(lb.id, :distinct) == 1,
+        select: n.id
+      )
+      |> Repo.all()
+      |> length()
+
+    link_to_note_ratio =
+      if total_nodes > 0,
+        do: Float.round(total_links / total_nodes, 2),
+        else: 0.0
+
+    %{
+      total_nodes: total_nodes,
+      total_links: total_links,
+      slipbox_count: slipbox_count,
+      orphan_count: orphan_count,
+      weakly_connected_count: weakly_connected_count,
+      link_to_note_ratio: link_to_note_ratio
+    }
+  end
+
+  @doc """
+  Get processed nodes with 0 links (orphans).
+  """
+  def get_orphan_nodes(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 25)
+
+    from(n in Node,
+      where: not is_nil(n.processed_at),
+      left_join: la in Link,
+      on: la.node_a_id == n.id,
+      left_join: lb in Link,
+      on: lb.node_b_id == n.id,
+      where: is_nil(la.id) and is_nil(lb.id),
+      order_by: [asc: n.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Get processed nodes with exactly 1 link (weakly connected).
+  """
+  def get_weakly_connected_nodes(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 25)
+
+    from(n in Node,
+      where: not is_nil(n.processed_at),
+      left_join: la in Link,
+      on: la.node_a_id == n.id,
+      left_join: lb in Link,
+      on: lb.node_b_id == n.id,
+      group_by: n.id,
+      having: count(la.id, :distinct) + count(lb.id, :distinct) == 1,
+      order_by: [asc: n.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Get the oldest processed nodes (stalest, least recently created).
+  Useful for periodic review of old content.
+  """
+  def get_stalest_nodes(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 25)
+
+    Node
+    |> where([n], not is_nil(n.processed_at))
+    |> order_by([n], asc: n.inserted_at)
     |> limit(^limit)
     |> Repo.all()
   end

@@ -24,7 +24,10 @@ defmodule Manfrod.Events.Activity do
   Memory:
   - `:memory_searched` - graph search performed
   - `:memory_node_created` - new node created
+  - `:memory_node_updated` - node content updated
+  - `:memory_node_deleted` - node deleted
   - `:memory_link_created` - new link created
+  - `:memory_link_deleted` - link deleted
   - `:memory_node_processed` - node marked as processed
 
   Extraction:
@@ -71,7 +74,10 @@ defmodule Manfrod.Events.Activity do
           # Memory
           | :memory_searched
           | :memory_node_created
+          | :memory_node_updated
+          | :memory_node_deleted
           | :memory_link_created
+          | :memory_link_deleted
           | :memory_node_processed
           # Extraction
           | :extraction_started
