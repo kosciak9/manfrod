@@ -94,6 +94,8 @@ defmodule Manfrod.Events.Activity do
           | :builder_failed
           # Reviewer
           | :reviewer_started
+          | :reviewer_diff_checked
+          | :reviewer_evaluated
           | :reviewer_completed
           | :reviewer_failed
           # LLM

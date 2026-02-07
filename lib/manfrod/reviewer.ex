@@ -87,6 +87,11 @@ defmodule Manfrod.Reviewer do
       {:ok, :no_changes} ->
         Logger.info("Reviewer: no local changes to review")
 
+        Events.broadcast(:reviewer_diff_checked, %{
+          source: :reviewer,
+          meta: %{has_changes: false}
+        })
+
         Events.broadcast(:reviewer_completed, %{
           source: :reviewer,
           meta: %{outcome: :no_changes}
@@ -95,6 +100,11 @@ defmodule Manfrod.Reviewer do
         {:ok, :no_changes}
 
       {:ok, %{diff: diff, commits: commits, branch: branch}} ->
+        Events.broadcast(:reviewer_diff_checked, %{
+          source: :reviewer,
+          meta: %{has_changes: true, branch: branch}
+        })
+
         review_changes(diff, commits, branch)
 
       {:error, reason} = err ->
@@ -241,15 +251,27 @@ defmodule Manfrod.Reviewer do
       {:ok, review} ->
         Logger.info("Reviewer: scored #{review.score}/5 - #{review.title}")
 
-        cond do
-          review.score >= 4 ->
-            submit_pr(review, branch)
+        outcome =
+          cond do
+            review.score >= 4 -> :pr_submitted
+            review.score >= 2 -> :changes_requested
+            true -> :changes_rejected
+          end
 
-          review.score >= 2 ->
-            request_changes(review)
+        Events.broadcast(:reviewer_evaluated, %{
+          source: :reviewer,
+          meta: %{
+            score: review.score,
+            outcome: outcome,
+            title: review.title,
+            assessment: String.slice(review.assessment, 0, 1000)
+          }
+        })
 
-          true ->
-            reject_changes(review, diff, commits)
+        case outcome do
+          :pr_submitted -> submit_pr(review, branch)
+          :changes_requested -> request_changes(review)
+          :changes_rejected -> reject_changes(review, diff, commits)
         end
 
       {:error, reason} ->
