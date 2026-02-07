@@ -3,6 +3,8 @@ defmodule Manfrod.Application do
 
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
     children =
@@ -25,6 +27,13 @@ defmodule Manfrod.Application do
 
     # Add logger handler after PubSub is running
     add_log_handler()
+
+    # Seed knowledge graph on first deploy (idempotent, transactional)
+    case Manfrod.Knowledge.Seed.seed_if_empty() do
+      {:ok, :seeded} -> Logger.info("Knowledge graph seeded successfully")
+      {:ok, :already_seeded} -> :ok
+      {:error, reason} -> Logger.error("Knowledge graph seeding failed: #{inspect(reason)}")
+    end
 
     # Register Telegram bot commands with API (so they appear in UI menu)
     Manfrod.Telegram.Commands.register()

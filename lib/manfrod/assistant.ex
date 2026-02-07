@@ -34,7 +34,7 @@ defmodule Manfrod.Assistant do
   alias Manfrod.LLM
   alias Manfrod.Memory
   alias Manfrod.Repo
-  alias Manfrod.Memory.Soul
+
   alias Manfrod.Shell
   alias Manfrod.Telegram.TypingRefresher
   alias Manfrod.Voyage
@@ -545,9 +545,7 @@ defmodule Manfrod.Assistant do
   end
 
   defp build_system_prompt do
-    unless Repo.healthy?() do
-      @system_prompt <> Soul.base_prompt()
-    else
+    if Repo.healthy?() do
       context =
         Init.build_system_prompt(
           include_events: false,
@@ -555,15 +553,11 @@ defmodule Manfrod.Assistant do
           include_samples: false
         )
 
-      soul = Memory.get_soul()
-
-      if soul do
-        # Soul exists - use context (which includes soul) + capabilities
-        context <> "\n\n" <> @system_prompt
-      else
-        # No soul yet - trigger onboarding flow
-        context <> "\n\n" <> @system_prompt <> Soul.base_prompt()
-      end
+      # Soul is seeded deterministically on first deploy via Knowledge.Seed
+      context <> "\n\n" <> @system_prompt
+    else
+      # DB not ready - use bare system prompt
+      @system_prompt
     end
   end
 

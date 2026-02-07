@@ -1,0 +1,1 @@
+Himalaya is a CLI email client that Manfrod can use to read and send emails. It connects via IMAP/SMTP using app passwords stored as encrypted credentials. The Assistant can use Himalaya through shell commands to check inbox, read messages, compose replies, and manage email on behalf of the user. This integration makes Manfrod useful for email triage and communication tasks.

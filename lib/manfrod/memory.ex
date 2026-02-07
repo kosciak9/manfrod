@@ -123,11 +123,12 @@ defmodule Manfrod.Memory do
 
   @doc """
   Get the soul - the first node by insertion time.
+  Uses ID as tiebreaker for deterministic ordering when timestamps match.
   Returns nil if no nodes exist.
   """
   def get_soul do
     Node
-    |> order_by([n], asc: n.inserted_at)
+    |> order_by([n], asc: n.inserted_at, asc: n.id)
     |> limit(1)
     |> Repo.one()
   end

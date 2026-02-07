@@ -1,0 +1,1 @@
+Calendula is a calendar integration for Manfrod (planned). It will allow the Assistant to read and manage calendar events, schedule meetings, and provide time-aware context in conversations. When implemented, the Assistant will be able to answer questions about upcoming events, find free time slots, and create calendar entries through natural conversation.
