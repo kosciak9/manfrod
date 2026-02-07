@@ -38,6 +38,7 @@ base_packages:
   - python-pip
   - erlang
   - elixir
+  - rust
 
 # =============================================================================
 # Container Runtime
@@ -91,6 +92,14 @@ tailscale_args: "--ssh"
 
 # Accept DNS from Tailscale (for MagicDNS)
 tailscale_accept_dns: true
+
+# =============================================================================
+# Pimalaya Tools
+# =============================================================================
+
+# Neither has an AUR package for aarch64, installed from GitHub release binaries
+himalaya_version: "1.1.0"
+calendula_version: "0.1.0"
 
 # =============================================================================
 # Firewall Configuration

@@ -3,11 +3,13 @@
 #
 # This playbook:
 # 1. Configures system (hostname, timezone, locale)
-# 2. Installs and configures Podman
-# 3. Sets up ParadeDB container with persistent storage
-# 4. Creates systemd service for ParadeDB
-# 5. Installs and configures Tailscale
-# 6. Configures firewall (optional)
+# 2. Sets up AUR helper (yay) for community packages
+# 3. Installs Pimalaya tools (himalaya email CLI, calendula calendar CLI)
+# 4. Installs and configures Podman
+# 5. Sets up ParadeDB container with persistent storage
+# 6. Creates systemd service for ParadeDB
+# 7. Installs and configures Tailscale
+# 8. Configures firewall (optional)
 #
 # Prerequisites:
 # - Bootstrap playbook has been run
@@ -27,6 +29,8 @@
 #   system    - hostname, timezone, locale, base packages
 #   locale    - locale configuration only
 #   network   - WiFi, networkd, resolved
+#   aur       - AUR helper (yay) setup
+#   pimalaya  - himalaya email CLI, calendula calendar CLI
 #   podman    - container runtime setup
 #   tun       - TUN module for Tailscale
 #   paradedb  - database container
@@ -217,6 +221,91 @@
         enabled: true
       become: true
       tags: [network]
+
+    # =========================================================================
+    # AUR Helper Setup
+    # =========================================================================
+
+    - name: Install yay AUR helper
+      kewlfft.aur.aur:
+        name: yay
+        use: yay
+        state: present
+      become: true
+      become_user: "{{ admin_user }}"
+      tags: [aur]
+
+    # =========================================================================
+    # Pimalaya Tools (himalaya email, calendula calendar)
+    # =========================================================================
+
+    - name: Check installed himalaya version
+      ansible.builtin.command: himalaya --version
+      register: himalaya_check
+      changed_when: false
+      failed_when: false
+      tags: [pimalaya]
+
+    - name: Download himalaya binary
+      ansible.builtin.get_url:
+        url: "https://github.com/pimalaya/himalaya/releases/download/v{{ himalaya_version }}/himalaya.aarch64-linux.tgz"
+        dest: /tmp/himalaya.tgz
+        mode: "0644"
+      become: true
+      when: himalaya_check.rc != 0 or himalaya_version not in (himalaya_check.stdout | default(''))
+      tags: [pimalaya]
+
+    - name: Install himalaya binary
+      ansible.builtin.unarchive:
+        src: /tmp/himalaya.tgz
+        dest: /usr/local/bin/
+        remote_src: true
+        mode: "0755"
+      become: true
+      when: himalaya_check.rc != 0 or himalaya_version not in (himalaya_check.stdout | default(''))
+      tags: [pimalaya]
+
+    - name: Clean up himalaya tarball
+      ansible.builtin.file:
+        path: /tmp/himalaya.tgz
+        state: absent
+      become: true
+      when: himalaya_check.rc != 0 or himalaya_version not in (himalaya_check.stdout | default(''))
+      tags: [pimalaya]
+
+    - name: Check installed calendula version
+      ansible.builtin.command: calendula --version
+      register: calendula_check
+      changed_when: false
+      failed_when: false
+      tags: [pimalaya]
+
+    - name: Download calendula binary
+      ansible.builtin.get_url:
+        url: "https://github.com/pimalaya/calendula/releases/download/v{{ calendula_version }}/calendula.aarch64-linux.tgz"
+        dest: /tmp/calendula.tgz
+        mode: "0644"
+      become: true
+      when: calendula_check.rc != 0 or calendula_version not in (calendula_check.stdout | default(''))
+      tags: [pimalaya]
+
+    - name: Install calendula binary
+      ansible.builtin.unarchive:
+        src: /tmp/calendula.tgz
+        dest: /usr/local/bin/
+        remote_src: true
+        mode: "0755"
+      become: true
+      when: calendula_check.rc != 0 or calendula_version not in (calendula_check.stdout | default(''))
+      tags: [pimalaya]
+
+    - name: Clean up calendula tarball
+      ansible.builtin.file:
+        path: /tmp/calendula.tgz
+        state: absent
+      become: true
+      when: calendula_check.rc != 0 or calendula_version not in (calendula_check.stdout | default(''))
+      tags: [pimalaya]
 
     # =========================================================================
     # Podman Installation
@@ -698,6 +787,10 @@
             - Tailscale: systemctl status tailscaled
             - ParadeDB:  systemctl status paradedb
             - Manfrod:   systemctl status manfrod
+
+          Pimalaya Tools:
+            - himalaya (email):      himalaya --version
+            - calendula (calendar):  calendula --version
 
           Application:
             - URL: http://{{ tailscale_ip.stdout }}:{{ app_port }}

@@ -12,5 +12,5 @@ collections:
   # Podman container management
   - name: containers.podman
 
-# Note: All packages installed via pacman (official Arch repos)
-# No AUR helpers needed - tailscale, podman, etc. are all in [extra]
+  # AUR package management
+  - name: kewlfft.aur
