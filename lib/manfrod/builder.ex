@@ -12,7 +12,7 @@ defmodule Manfrod.Builder do
 
   require Logger
 
-  alias Manfrod.Agent.Init
+  alias Manfrod.Assistant.Init
   alias Manfrod.Code
   alias Manfrod.Events
   alias Manfrod.LLM
@@ -122,7 +122,7 @@ defmodule Manfrod.Builder do
         name: "read_source",
         description: "Read the source code of an Elixir module.",
         parameter_schema: [
-          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Agent'"]
+          module: [type: :string, required: true, doc: "Module name, e.g., 'Manfrod.Assistant'"]
         ],
         callback: &tool_read_source/1
       ),

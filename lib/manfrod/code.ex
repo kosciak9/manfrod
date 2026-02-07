@@ -126,7 +126,7 @@ defmodule Manfrod.Code do
   # Private functions
 
   defp module_to_path(module) do
-    # Manfrod.Agent -> lib/manfrod/agent.ex
+    # Manfrod.Assistant -> lib/manfrod/assistant.ex
     relative_path =
       module
       |> to_string()

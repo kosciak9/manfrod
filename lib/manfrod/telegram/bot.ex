@@ -1,7 +1,7 @@
 defmodule Manfrod.Telegram.Bot do
   @moduledoc """
   Telegram bot interface for Manfrod.
-  Forwards messages to the Agent inbox asynchronously.
+  Forwards messages to the Assistant inbox asynchronously.
 
   Only the user specified by TELEGRAM_ALLOWED_USER_ID can interact with the bot.
   """
@@ -49,7 +49,7 @@ defmodule Manfrod.Telegram.Bot do
   # Handle /idle command - manually trigger conversation close
   def handle({:command, "idle", message}, _context) do
     if allowed?(message) do
-      Manfrod.Agent.trigger_idle(%{source: :telegram, reply_to: message.chat.id})
+      Manfrod.Assistant.trigger_idle(%{source: :telegram, reply_to: message.chat.id})
       :ok
     else
       log_blocked(message, "/idle")
@@ -70,8 +70,8 @@ defmodule Manfrod.Telegram.Bot do
         }
       })
 
-      # Send to Agent inbox - ActivityHandler will handle typing and responses
-      Manfrod.Agent.send_message(%{
+      # Send to Assistant inbox - ActivityHandler will handle typing and responses
+      Manfrod.Assistant.send_message(%{
         content: text,
         source: :telegram,
         reply_to: message.chat.id

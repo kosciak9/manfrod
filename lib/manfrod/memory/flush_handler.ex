@@ -3,7 +3,7 @@ defmodule Manfrod.Memory.FlushHandler do
   Handles memory extraction on conversation idle.
 
   Subscribes to the event bus and triggers extraction
-  when the agent broadcasts an :idle event. The Extractor
+  when the assistant broadcasts an :idle event. The Extractor
   fetches pending messages directly from the database.
   """
   use GenServer

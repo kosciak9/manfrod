@@ -20,8 +20,8 @@ defmodule Manfrod.LLM do
       # Simple call (extractor style)
       {:ok, response} = Manfrod.LLM.generate_text(messages, purpose: :extractor)
 
-      # With tools (agent style)
-      {:ok, response} = Manfrod.LLM.generate_text(messages, tools: tools, purpose: :agent)
+      # With tools (assistant style)
+      {:ok, response} = Manfrod.LLM.generate_text(messages, tools: tools, purpose: :assistant)
 
       # Access response
       ReqLLM.Response.text(response)
@@ -71,7 +71,7 @@ defmodule Manfrod.LLM do
   ## Options
 
     * `:tools` - List of `ReqLLM.Tool` structs for tool-calling
-    * `:purpose` - Atom identifying the caller (:agent, :extractor, :retrospector)
+    * `:purpose` - Atom identifying the caller (:assistant, :extractor, :retrospector)
       Used for event metadata only.
 
   ## Returns

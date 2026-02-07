@@ -6,21 +6,23 @@ defmodule ManfrodWeb.HealthController do
       status: "ok",
       timestamp: DateTime.utc_now() |> DateTime.to_iso8601(),
       services: %{
-        agent: check_agent(),
+        assistant: check_assistant(),
         database: check_database()
       }
     }
 
     status_code =
-      if health.services.agent == "ok" and health.services.database == "ok", do: 200, else: 503
+      if health.services.assistant == "ok" and health.services.database == "ok",
+        do: 200,
+        else: 503
 
     conn
     |> put_status(status_code)
     |> json(health)
   end
 
-  defp check_agent do
-    if Process.whereis(Manfrod.Agent), do: "ok", else: "down"
+  defp check_assistant do
+    if Process.whereis(Manfrod.Assistant), do: "ok", else: "down"
   end
 
   defp check_database do

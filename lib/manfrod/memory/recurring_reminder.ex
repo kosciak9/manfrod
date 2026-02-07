@@ -1,8 +1,8 @@
 defmodule Manfrod.Memory.RecurringReminder do
   @moduledoc """
-  A recurring reminder that triggers the agent on a cron schedule.
+  A recurring reminder that triggers the assistant on a cron schedule.
 
-  Each reminder links to a node that provides context/instructions for the agent
+  Each reminder links to a node that provides context/instructions for the assistant
   when the reminder fires. The node's content becomes the prompt, and all notes
   linked to that node are included as additional context.
   """

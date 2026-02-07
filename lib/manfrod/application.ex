@@ -14,8 +14,8 @@ defmodule Manfrod.Application do
         Manfrod.Events.Persister,
         Manfrod.Memory.FlushHandler,
         Manfrod.Telegram.ActivityHandler,
-        # Core agent
-        Manfrod.Agent,
+        # Core assistant
+        Manfrod.Assistant,
         ManfrodWeb.Endpoint
       ] ++ telegram_children()
 

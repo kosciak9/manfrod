@@ -1,4 +1,4 @@
-defmodule Manfrod.Agent.Init do
+defmodule Manfrod.Assistant.Init do
   @moduledoc """
   Shared initialization for agents.
 

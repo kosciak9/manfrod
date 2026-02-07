@@ -1,6 +1,6 @@
-defmodule Manfrod.Agent do
+defmodule Manfrod.Assistant do
   @moduledoc """
-  The Agent - a GenServer with an inbox.
+  The Assistant - a GenServer with an inbox.
   Receives messages asynchronously, thinks, acts, responds via event bus.
 
   Manfrod can modify his own code, execute shell commands, and evaluate
@@ -8,9 +8,9 @@ defmodule Manfrod.Agent do
 
   ## Event-driven architecture
 
-  The Agent broadcasts Activity events instead of calling handlers directly:
+  The Assistant broadcasts Activity events instead of calling handlers directly:
   - `:thinking` - message received, starting LLM call
-  - `:narrating` - agent explaining what it's doing (text between tool calls)
+  - `:narrating` - assistant explaining what it's doing (text between tool calls)
   - `:action_started` - beginning action execution (tool name, args)
   - `:action_completed` - action finished (result, duration, success/fail)
   - `:responding` - final response ready
@@ -29,7 +29,7 @@ defmodule Manfrod.Agent do
 
   require Logger
 
-  alias Manfrod.Agent.Init
+  alias Manfrod.Assistant.Init
   alias Manfrod.Events
   alias Manfrod.LLM
   alias Manfrod.Memory
@@ -244,9 +244,9 @@ defmodule Manfrod.Agent do
   end
 
   @doc """
-  Send a message to the agent asynchronously.
+  Send a message to the assistant asynchronously.
 
-  The agent will process the message and broadcast Activity events.
+  The assistant will process the message and broadcast Activity events.
   Subscribers handle response delivery based on the source.
 
   ## Required fields
@@ -521,7 +521,7 @@ defmodule Manfrod.Agent do
     pending = Memory.get_pending_messages()
     restored_messages = Enum.map(pending, &message_to_context/1)
 
-    # If we restored messages, add a system notice so agent knows it restarted
+    # If we restored messages, add a system notice so assistant knows it restarted
     messages =
       if restored_messages != [] do
         restart_notice =
@@ -627,7 +627,7 @@ defmodule Manfrod.Agent do
   def handle_info(:loop, state) do
     # Check DB health before processing
     unless Repo.healthy?() do
-      Logger.error("Agent: database unavailable, cannot process message")
+      Logger.error("Assistant: database unavailable, cannot process message")
       # Get last event_ctx for error response
       {_content, event_ctx} = List.last(state.inbox)
 
@@ -654,7 +654,7 @@ defmodule Manfrod.Agent do
   # LLM call: iteration limit
   def handle_info({:call_llm, _ctx, iter, refresher_pid}, state) when iter >= 50 do
     TypingRefresher.stop(refresher_pid)
-    Logger.error("Agent: max tool iterations reached")
+    Logger.error("Assistant: max tool iterations reached")
     send(self(), :loop)
     {:noreply, state}
   end
@@ -664,12 +664,12 @@ defmodule Manfrod.Agent do
     if state.inbox != [] do
       # Interrupted by new messages
       TypingRefresher.stop(refresher_pid)
-      Logger.info("Agent: interrupted by new message(s)")
+      Logger.info("Assistant: interrupted by new message(s)")
       Events.broadcast(:interrupted, ctx)
       send(self(), :loop)
       {:noreply, state}
     else
-      case LLM.generate_text(state.messages, tools: tools(), purpose: :agent) do
+      case LLM.generate_text(state.messages, tools: tools(), purpose: :assistant) do
         {:ok, response} ->
           handle_llm_response(response, ctx, iter, refresher_pid, state)
 
@@ -737,7 +737,7 @@ defmodule Manfrod.Agent do
       :tool_calls ->
         # Execute tools and continue conversation
         tool_calls = ReqLLM.Response.tool_calls(response)
-        Logger.info("Agent executing #{length(tool_calls)} tool(s)")
+        Logger.info("Assistant executing #{length(tool_calls)} tool(s)")
 
         # Extract any narrative text the LLM sent alongside tool calls
         narrative_text = ReqLLM.Response.text(response) || ""
@@ -810,7 +810,7 @@ defmodule Manfrod.Agent do
 
         # Broadcast response
         Events.broadcast(:responding, Map.put(ctx, :meta, %{content: response_text}))
-        Logger.info("Agent broadcast response for #{ctx.source}")
+        Logger.info("Assistant broadcast response for #{ctx.source}")
 
         # Debounce flush timer
         if state.flush_timer, do: Process.cancel_timer(state.flush_timer)

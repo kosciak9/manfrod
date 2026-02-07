@@ -1,15 +1,15 @@
-defmodule Manfrod.AgentTest do
+defmodule Manfrod.AssistantTest do
   use Manfrod.DataCase
 
-  alias Manfrod.Agent
+  alias Manfrod.Assistant
   alias Manfrod.Events
 
   @moduletag :db
 
   describe "state structure" do
     test "has inbox field" do
-      pid = Process.whereis(Agent)
-      # Use longer timeout as agent might be busy with LLM call
+      pid = Process.whereis(Assistant)
+      # Use longer timeout as assistant might be busy with LLM call
       state = :sys.get_state(pid, 30_000)
 
       assert Map.has_key?(state, :inbox)
@@ -27,7 +27,7 @@ defmodule Manfrod.AgentTest do
     end
 
     test "broadcasts :thinking when processing message" do
-      Agent.send_message(%{
+      Assistant.send_message(%{
         content: "Test message #{System.unique_integer()}",
         source: :test,
         reply_to: self()
@@ -38,7 +38,7 @@ defmodule Manfrod.AgentTest do
     end
 
     test "broadcasts :responding after processing" do
-      Agent.send_message(%{
+      Assistant.send_message(%{
         content: "Quick test #{System.unique_integer()}",
         source: :test,
         reply_to: self()
@@ -66,7 +66,7 @@ defmodule Manfrod.AgentTest do
       # 3. All messages get processed
 
       # Send first message
-      Agent.send_message(%{
+      Assistant.send_message(%{
         content: "First message #{System.unique_integer()}",
         source: :test,
         reply_to: self()
@@ -76,7 +76,7 @@ defmodule Manfrod.AgentTest do
       assert_receive {:activity, %{type: :thinking, source: :test}}, 60_000
 
       # Immediately send second message while first is processing
-      Agent.send_message(%{
+      Assistant.send_message(%{
         content: "Second message (interrupt) #{System.unique_integer()}",
         source: :test,
         reply_to: self()
@@ -107,7 +107,7 @@ defmodule Manfrod.AgentTest do
 
   describe "loop behavior" do
     test "empty inbox loop is no-op" do
-      pid = Process.whereis(Agent)
+      pid = Process.whereis(Assistant)
 
       # Send :loop - should be safe even during work
       send(pid, :loop)
@@ -119,7 +119,7 @@ defmodule Manfrod.AgentTest do
     end
 
     test "multiple :loop messages don't cause issues" do
-      pid = Process.whereis(Agent)
+      pid = Process.whereis(Assistant)
 
       # Send multiple :loop messages rapidly
       for _ <- 1..10 do

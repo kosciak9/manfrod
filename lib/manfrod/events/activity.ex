@@ -112,8 +112,8 @@ defmodule Manfrod.Events.Activity do
   ## Examples
 
       Activity.new(:message_received, %{source: :telegram, meta: %{content: "Hello", from_id: 123}})
-      Activity.new(:action_started, %{source: :agent, meta: %{action: "run_shell", action_id: "abc123", args: %{command: "ls"}}})
-      Activity.new(:action_completed, %{source: :agent, meta: %{action_id: "abc123", result: "file1\\nfile2", duration_ms: 150, success: true}})
+      Activity.new(:action_started, %{source: :assistant, meta: %{action: "run_shell", action_id: "abc123", args: %{command: "ls"}}})
+      Activity.new(:action_completed, %{source: :assistant, meta: %{action_id: "abc123", result: "file1\\nfile2", duration_ms: 150, success: true}})
       Activity.new(:thinking, %{source: :telegram, reply_to: 456})
       Activity.new(:log, %{source: :logger, meta: %{level: :error, message: "Something failed", module: MyApp.Worker}})
   """

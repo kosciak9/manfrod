@@ -1,6 +1,6 @@
 defmodule Manfrod.Workers.TriggerWorker do
   @moduledoc """
-  Executes a scheduled trigger by sending a prompt to the Agent.
+  Executes a scheduled trigger by sending a prompt to the Assistant.
 
   All responses are routed to Telegram via the configured `telegram_allowed_user_id`.
 
@@ -9,9 +9,9 @@ defmodule Manfrod.Workers.TriggerWorker do
   For recurring reminders (from SchedulerWorker):
   - `recurring_reminder_id` - UUID of the recurring reminder
 
-  For one-time reminders (from Agent):
+  For one-time reminders (from Assistant):
   - `trigger_id` - identifier of the trigger (for logging)
-  - `prompt` - the message to send to the Agent
+  - `prompt` - the message to send to the Assistant
   """
   use Oban.Worker,
     queue: :default,
@@ -56,13 +56,13 @@ defmodule Manfrod.Workers.TriggerWorker do
       Logger.error("TriggerWorker: telegram_allowed_user_id not configured")
       {:error, :missing_chat_id}
     else
-      Manfrod.Agent.send_message(%{
+      Manfrod.Assistant.send_message(%{
         content: prompt,
         source: :telegram,
         reply_to: chat_id
       })
 
-      Logger.info("TriggerWorker: trigger '#{trigger_id}' sent to Agent")
+      Logger.info("TriggerWorker: trigger '#{trigger_id}' sent to Assistant")
       :ok
     end
   end
