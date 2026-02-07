@@ -7,6 +7,7 @@ defmodule Manfrod.Application do
   def start(_type, _args) do
     children =
       [
+        Manfrod.Vault,
         Manfrod.Repo,
         {Phoenix.PubSub, name: Manfrod.PubSub},
         {Oban, Application.fetch_env!(:manfrod, Oban)},

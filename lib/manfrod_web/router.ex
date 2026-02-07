@@ -13,15 +13,25 @@ defmodule ManfrodWeb.Router do
     plug :accepts, ["json"]
   end
 
-  # Health check endpoint - no auth required
-  scope "/api", ManfrodWeb do
+  # Health check - accessible during setup, no auth
+  scope "/", ManfrodWeb do
     pipe_through :api
 
     get "/health", HealthController, :index
+    # Keep old path for backward compatibility
+    get "/api/health", HealthController, :index
   end
 
+  # Setup wizard - always accessible (no setup redirect)
   scope "/", ManfrodWeb do
     pipe_through :browser
+
+    live "/setup", SetupLive
+  end
+
+  # Main app routes - redirect to /setup if credentials missing
+  scope "/", ManfrodWeb do
+    pipe_through [:browser, ManfrodWeb.Plugs.RequireSetup]
 
     live "/", ActivityLive
     live "/chat", ChatLive

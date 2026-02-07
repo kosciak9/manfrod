@@ -1,0 +1,38 @@
+# Build artifacts
+/_build/
+/deps/
+/cover/
+/doc/
+
+# Environment and secrets
+.env
+.env.*
+
+# Git
+.git/
+.gitignore
+
+# Editor / IDE
+.elixir_ls/
+.expert/
+.vscode/
+*.swp
+*.swo
+
+# Deployment
+deployment/
+
+# Temporary files
+/tmp/
+erl_crash.dump
+*.ez
+
+# Container files (don't copy themselves)
+Containerfile
+.containerignore
+
+# Tailwind standalone binary (will be fetched during build)
+/_build/tailwind-*
+
+# Ansible
+deployment/remote/ansible/.vault_pass
