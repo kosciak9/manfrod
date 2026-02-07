@@ -87,6 +87,15 @@ defmodule Manfrod.Events.Activity do
           | :retrospection_started
           | :retrospection_completed
           | :retrospection_failed
+          # Builder
+          | :builder_started
+          | :builder_mode_selected
+          | :builder_completed
+          | :builder_failed
+          # Reviewer
+          | :reviewer_started
+          | :reviewer_completed
+          | :reviewer_failed
           # LLM
           | :llm_call_started
           | :llm_call_succeeded

@@ -52,7 +52,7 @@ config :tailwind,
 config :manfrod, Oban,
   engine: Oban.Engines.Basic,
   repo: Manfrod.Repo,
-  queues: [default: 10, retrospection: 1, builder: 1],
+  queues: [default: 10, retrospection: 1, builder: 1, reviewer: 1],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,
@@ -62,7 +62,9 @@ config :manfrod, Oban,
        # Every hour - schedule triggers for next 48h
        {"0 * * * *", Manfrod.Workers.SchedulerWorker},
        # Every 3 hours - builder
-       {"0 */3 * * *", Manfrod.Workers.BuilderWorker}
+       {"0 */3 * * *", Manfrod.Workers.BuilderWorker},
+       # 30 minutes after builder - reviewer
+       {"30 */3 * * *", Manfrod.Workers.ReviewerWorker}
      ]}
   ]
 
