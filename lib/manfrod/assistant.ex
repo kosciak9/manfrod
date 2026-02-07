@@ -34,8 +34,8 @@ defmodule Manfrod.Assistant do
   alias Manfrod.LLM
   alias Manfrod.Memory
   alias Manfrod.Repo
-
   alias Manfrod.Shell
+  alias Manfrod.Tasks
   alias Manfrod.Telegram.TypingRefresher
   alias Manfrod.Voyage
   alias Manfrod.Workers.TriggerWorker
@@ -63,14 +63,17 @@ defmodule Manfrod.Assistant do
   - **You (Assistant)**: User interface. Can queue tasks for Builder.
 
   ## Planning Mode
-  When the user wants to build or modify code:
+  When the user wants to build, modify code, or add features:
   1. Switch to planning mode - acknowledge you're planning
-  2. Ask clarifying questions about requirements and constraints
+  2. Ask clarifying questions about requirements, constraints, edge cases
   3. Break down the request into specific, actionable tasks
-  4. Summarize the plan and ask for explicit confirmation
-  5. Only after approval, create notes and queue tasks for Builder
+  4. Summarize the full plan and ask for explicit confirmation
+  5. Only after the user explicitly approves, call queue_task
 
-  The workflow: User request → Your planning → create task → Builder executes
+  IMPORTANT: Never call queue_task without the user's explicit approval.
+  The user can decline or ask for changes to the plan before committing.
+
+  The workflow: User request → Your planning → queue_task → Builder executes
   → Reviewer evaluates → PR or feedback loop.
 
   You do NOT push code yourself. You plan and delegate to Builder.
@@ -90,6 +93,7 @@ defmodule Manfrod.Assistant do
   - delete_note: Remove a note and all its links
   - link_notes: Connect two related notes
   - unlink_notes: Disconnect two notes
+  - queue_task: Queue a planned task for Builder (only after planning + user approval)
 
   Note context is injected with each message, showing relevant notes with
   their UUIDs. Use search_notes to find more, get_note to explore
@@ -267,6 +271,21 @@ defmodule Manfrod.Assistant do
           note_b_id: [type: :string, required: true, doc: "Second note UUID"]
         ],
         callback: &tool_unlink_notes/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "queue_task",
+        description:
+          "Queue a planned task for Builder to implement. Only use AFTER a planning conversation where you've asked clarifying questions and the user has explicitly approved the plan. Creates a note with the full spec and queues it.",
+        parameter_schema: [
+          title: [type: :string, required: true, doc: "Clear, concise task title"],
+          description: [
+            type: :string,
+            required: true,
+            doc:
+              "Detailed implementation plan from the planning conversation. Include requirements, constraints, and acceptance criteria."
+          ]
+        ],
+        callback: &tool_queue_task/1
       )
     ]
   end
@@ -539,6 +558,35 @@ defmodule Manfrod.Assistant do
 
       {:error, :not_found} ->
         {:ok, "Link not found: #{a} <-> #{b}"}
+    end
+  end
+
+  def tool_queue_task(%{title: title, description: description}) do
+    # Create a note with the full task spec
+    full_content = "#{title}\n\n#{description}"
+
+    embedding =
+      case Voyage.embed_query(full_content) do
+        {:ok, emb} -> emb
+        {:error, _} -> nil
+      end
+
+    attrs = %{content: full_content}
+    attrs = if embedding, do: Map.put(attrs, :embedding, embedding), else: attrs
+
+    case Memory.create_node(attrs) do
+      {:ok, note} ->
+        case Tasks.create(%{assignee: "builder", note_id: note.id}) do
+          {:ok, task} ->
+            {:ok,
+             "Task queued for Builder (#{task.id}). Builder will pick it up in the next cycle (runs every 3 hours). Reviewer will evaluate the result."}
+
+          {:error, changeset} ->
+            {:ok, "Failed to create task: #{inspect(changeset.errors)}"}
+        end
+
+      {:error, changeset} ->
+        {:ok, "Failed to create task note: #{inspect(changeset.errors)}"}
     end
   end
 
