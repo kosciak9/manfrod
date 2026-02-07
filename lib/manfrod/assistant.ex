@@ -94,6 +94,14 @@ defmodule Manfrod.Assistant do
   - link_notes: Connect two related notes
   - unlink_notes: Disconnect two notes
   - queue_task: Queue a planned task for Builder (only after planning + user approval)
+  - present_choices: Show interactive choices (buttons on Telegram, numbered list on CLI)
+
+  ## Interactive Choices
+  Use present_choices when you want structured input from the user:
+  - Yes/No confirmations ("Should I proceed with this plan?")
+  - Multiple choice options ("Which approach do you prefer?")
+  - Planning step selections ("What should we tackle first?")
+  The user's selection is sent back as their next message automatically.
 
   Note context is injected with each message, showing relevant notes with
   their UUIDs. Use search_notes to find more, get_note to explore
@@ -286,6 +294,25 @@ defmodule Manfrod.Assistant do
           ]
         ],
         callback: &tool_queue_task/1
+      ),
+      ReqLLM.Tool.new!(
+        name: "present_choices",
+        description:
+          "Present interactive choices to the user (rendered as buttons on Telegram, numbered list on CLI). Use during planning to let the user pick between options, confirm/reject plans, or answer structured questions. The user's selection will be sent back as their next message.",
+        parameter_schema: [
+          question: [
+            type: :string,
+            required: true,
+            doc: "The question or prompt to display above the choices"
+          ],
+          choices: [
+            type: :array,
+            required: true,
+            doc:
+              "List of choices, each with a 'label' (displayed text) and 'value' (sent back when selected). Example: [{\"label\": \"Yes, proceed\", \"value\": \"yes\"}, {\"label\": \"No, let me revise\", \"value\": \"no\"}]"
+          ]
+        ],
+        callback: &tool_present_choices/1
       )
     ]
   end
@@ -590,6 +617,27 @@ defmodule Manfrod.Assistant do
     end
   end
 
+  def tool_present_choices(%{question: question, choices: choices}) do
+    ctx = Process.get(:assistant_event_ctx, %{})
+
+    # Normalize choices - they come as maps from JSON
+    normalized =
+      Enum.map(choices, fn choice ->
+        %{
+          label: choice["label"] || choice[:label] || to_string(choice),
+          value: choice["value"] || choice[:value] || to_string(choice)
+        }
+      end)
+
+    Events.broadcast(
+      :presenting_choices,
+      Map.put(ctx, :meta, %{question: question, choices: normalized})
+    )
+
+    labels = Enum.map_join(normalized, ", ", & &1.label)
+    {:ok, "Choices presented to user: #{labels}. Waiting for their selection."}
+  end
+
   # Server Callbacks
 
   # 60 minutes debounce before flushing conversation
@@ -825,6 +873,9 @@ defmodule Manfrod.Assistant do
         # Add assistant message with tool calls
         assistant_msg = ReqLLM.Context.assistant(narrative_text, tool_calls: tool_calls)
         messages = state.messages ++ [assistant_msg]
+
+        # Store event context for tool callbacks that need it (e.g. present_choices)
+        Process.put(:assistant_event_ctx, ctx)
 
         # Execute each tool and add results
         messages_with_results =

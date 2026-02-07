@@ -60,6 +60,42 @@ defmodule Manfrod.Telegram.ActivityHandler do
     send_typing(chat_id)
   end
 
+  defp handle_activity(%Activity{
+         type: :presenting_choices,
+         reply_to: chat_id,
+         meta: %{question: question, choices: choices}
+       }) do
+    # Build inline keyboard - one button per row
+    keyboard =
+      ExGram.Dsl.create_inline(
+        Enum.map(choices, fn %{label: label, value: value} ->
+          [[text: label, callback_data: value]]
+        end)
+      )
+
+    token = Application.get_env(:manfrod, :telegram_bot_token)
+
+    case ExGram.send_message(chat_id, question,
+           reply_markup: keyboard,
+           token: token
+         ) do
+      {:ok, _} ->
+        Logger.info("Telegram: sent inline keyboard to chat #{chat_id}")
+
+      {:error, reason} ->
+        Logger.error("Telegram: failed to send inline keyboard: #{inspect(reason)}")
+        # Fallback: send as plain text with labeled options
+        fallback =
+          question <>
+            "\n\n" <>
+            Enum.map_join(choices, "\n", fn %{label: label, value: value} ->
+              "• #{label} (reply: #{value})"
+            end)
+
+        Sender.send_formatted(chat_id, fallback)
+    end
+  end
+
   defp handle_activity(%Activity{type: :action_completed}) do
     # No notification needed for action completion
     :ok

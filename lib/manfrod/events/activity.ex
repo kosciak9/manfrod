@@ -14,6 +14,7 @@ defmodule Manfrod.Events.Activity do
   Agent (conversation):
   - `:thinking` - message received, starting LLM call
   - `:narrating` - agent explaining what it's doing (text between tool calls)
+  - `:presenting_choices` - interactive choices for the user (inline keyboard / numbered list)
   - `:responding` - final response ready
   - `:interrupted` - new message arrived, restarting with fresh context
   - `:idle` - conversation timed out
@@ -66,6 +67,7 @@ defmodule Manfrod.Events.Activity do
           # Agent
           | :thinking
           | :narrating
+          | :presenting_choices
           | :responding
           | :interrupted
           | :idle
