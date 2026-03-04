@@ -2,7 +2,8 @@ defmodule Manfrod.Workers.TriggerWorker do
   @moduledoc """
   Executes a scheduled trigger by sending a prompt to the Agent.
 
-  All responses are routed to Telegram via the configured `telegram_allowed_user_id`.
+  Responses are broadcast on the event bus with `source: :scheduled`.
+  Transport adapters subscribe to these events to deliver them to the appropriate channel.
 
   ## Job args
 
@@ -50,21 +51,14 @@ defmodule Manfrod.Workers.TriggerWorker do
   end
 
   defp send_to_agent(prompt, trigger_id) do
-    chat_id = Application.get_env(:manfrod, :telegram_allowed_user_id)
+    Manfrod.Agent.send_message(%{
+      content: prompt,
+      source: :scheduled,
+      reply_to: nil
+    })
 
-    if is_nil(chat_id) do
-      Logger.error("TriggerWorker: telegram_allowed_user_id not configured")
-      {:error, :missing_chat_id}
-    else
-      Manfrod.Agent.send_message(%{
-        content: prompt,
-        source: :telegram,
-        reply_to: chat_id
-      })
-
-      Logger.info("TriggerWorker: trigger '#{trigger_id}' sent to Agent")
-      :ok
-    end
+    Logger.info("TriggerWorker: trigger '#{trigger_id}' sent to Agent")
+    :ok
   end
 
   defp build_recurring_reminder_prompt(reminder) do

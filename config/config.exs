@@ -63,6 +63,3 @@ config :manfrod, Oban,
        {"0 * * * *", Manfrod.Workers.SchedulerWorker}
      ]}
   ]
-
-# ExGram (Telegram bot)
-config :ex_gram, adapter: ExGram.Adapter.Req

@@ -1,7 +1,6 @@
 defmodule ManfrodWeb.ChatLive do
   @moduledoc """
-  Placeholder for future configuration UI.
-  Chat functionality has moved to Telegram.
+  Placeholder for future chat UI.
   """
   use ManfrodWeb, :live_view
 
@@ -16,11 +15,8 @@ defmodule ManfrodWeb.ChatLive do
     <Layouts.app flash={@flash}>
       <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh;">
         <h1 style="margin-bottom: 20px;">Manfrod</h1>
-        <p style="color: #888; margin-bottom: 10px;">
-          Chat with Manfrod via Telegram.
-        </p>
         <p style="color: #666; font-size: 0.9em;">
-          Configuration UI coming soon.
+          Chat UI coming soon.
         </p>
       </div>
     </Layouts.app>

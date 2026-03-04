@@ -32,7 +32,7 @@ defmodule Manfrod.Agent do
   alias Manfrod.Memory
   alias Manfrod.Repo
   alias Manfrod.Memory.Soul
-  alias Manfrod.Telegram.TypingRefresher
+  alias Manfrod.Agent.TypingRefresher
   alias Manfrod.Voyage
   alias Manfrod.Workers.TriggerWorker
 

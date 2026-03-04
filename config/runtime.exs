@@ -50,8 +50,3 @@ config :manfrod, :voyage_api_key, env!("VOYAGE_API_KEY", :string?)
 
 # Groq API (query expansion)
 config :manfrod, :groq_api_key, env!("GROQ_API_KEY", :string?)
-
-# Telegram Bot
-config :manfrod, :telegram_bot_token, env!("TELEGRAM_BOT_TOKEN", :string?)
-
-config :manfrod, :telegram_allowed_user_id, env!("TELEGRAM_ALLOWED_USER_ID", :integer)

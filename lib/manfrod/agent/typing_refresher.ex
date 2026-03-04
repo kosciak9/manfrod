@@ -1,10 +1,11 @@
-defmodule Manfrod.Telegram.TypingRefresher do
+defmodule Manfrod.Agent.TypingRefresher do
   @moduledoc """
-  Relays LLM retry/fallback events as :thinking events to refresh Telegram typing indicator.
+  Relays LLM retry/fallback events as :thinking events to keep activity indicators alive.
 
-  Telegram's "typing" status expires after ~5 seconds. During long LLM operations
-  with retries and fallbacks, this process listens for LLM events and re-broadcasts
-  :thinking to keep the indicator alive.
+  During long LLM operations with retries and fallbacks, this process listens for
+  LLM events and re-broadcasts :thinking to signal that processing is still active.
+  Transport adapters (e.g. Slack) can subscribe to these events to refresh their
+  own typing/processing indicators.
 
   ## Usage
 
