@@ -12,7 +12,7 @@ defmodule ManfrodWeb.ActivityLive do
   Supports query params for viewing specific time ranges:
   - `from` - ISO8601 datetime to filter events from
   - `to` - ISO8601 datetime to filter events until
-  - `source` - filter by source (e.g., "builder", "retrospector")
+  - `source` - filter by source (e.g., "retrospector")
 
   When filtered, live updates are disabled and a context banner is shown.
   """
@@ -231,10 +231,6 @@ defmodule ManfrodWeb.ActivityLive do
     <div class="bg-blue-950/50 border-b border-blue-800 px-4 py-3">
       <div class="flex items-center justify-between max-w-4xl mx-auto">
         <div class="flex items-center gap-3">
-          <.link navigate="/self-improvement" class="text-blue-400 hover:text-blue-300 text-xs">
-            ← Back to Self-Improvement
-          </.link>
-          <span class="text-zinc-500">|</span>
           <span class="text-zinc-300 text-sm">
             <%= format_filter_description(@filter) %>
           </span>

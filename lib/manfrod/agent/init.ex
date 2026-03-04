@@ -6,7 +6,6 @@ defmodule Manfrod.Agent.Init do
   - Soul node (shared entrypoint)
   - Linked notes (workspace)
   - Recent audit events (delta since last run)
-  - Git log (code changes)
   - Random graph sample (serendipity)
 
   This enables agents to understand "what happened" and make informed decisions.
@@ -14,7 +13,6 @@ defmodule Manfrod.Agent.Init do
 
   alias Manfrod.Events.Store
   alias Manfrod.Memory
-  alias Manfrod.Shell
 
   @doc """
   Build context for an agent run.
@@ -23,7 +21,6 @@ defmodule Manfrod.Agent.Init do
   - `:soul` - the soul node (entrypoint)
   - `:linked_notes` - notes linked to soul
   - `:recent_events` - audit events since given timestamp
-  - `:git_log` - recent git commits
   - `:graph_sample` - random nodes from the graph
 
   ## Options
@@ -31,14 +28,12 @@ defmodule Manfrod.Agent.Init do
     * `:since` - timestamp for events delta (default: 24 hours ago)
     * `:event_limit` - max events to fetch (default: 100)
     * `:event_types` - filter event types (default: all)
-    * `:git_depth` - number of git commits to fetch (default: 20)
     * `:sample_size` - random graph sample size (default: 5)
   """
   def build_context(opts \\ []) do
     since = Keyword.get(opts, :since, default_since())
     event_limit = Keyword.get(opts, :event_limit, 100)
     event_types = Keyword.get(opts, :event_types, nil)
-    git_depth = Keyword.get(opts, :git_depth, 20)
     sample_size = Keyword.get(opts, :sample_size, 5)
 
     soul = Memory.get_soul()
@@ -57,14 +52,12 @@ defmodule Manfrod.Agent.Init do
       end)
 
     recent_events = Store.get_events_since(since, event_opts)
-    git_log = get_git_log(git_depth)
     graph_sample = Memory.get_random_nodes(sample_size)
 
     %{
       soul: soul,
       linked_notes: linked_notes,
       recent_events: recent_events,
-      git_log: git_log,
       graph_sample: graph_sample,
       since: since
     }
@@ -80,27 +73,24 @@ defmodule Manfrod.Agent.Init do
 
   Same as `build_context/1`, plus:
     * `:include_events` - whether to include events (default: true)
-    * `:include_git` - whether to include git log (default: true)
     * `:include_samples` - whether to include random graph samples (default: true)
 
   ## Examples
 
-      # Builder gets full context
+      # Retrospector gets full context
       Init.build_system_prompt()
 
       # Assistant gets just soul + linked notes
-      Init.build_system_prompt(include_events: false, include_git: false, include_samples: false)
+      Init.build_system_prompt(include_events: false, include_samples: false)
   """
   def build_system_prompt(opts \\ []) do
     include_events = Keyword.get(opts, :include_events, true)
-    include_git = Keyword.get(opts, :include_git, true)
     include_samples = Keyword.get(opts, :include_samples, true)
 
     # Adjust opts to skip unwanted sections
     context_opts =
       opts
       |> Keyword.put_new(:event_limit, if(include_events, do: 100, else: 0))
-      |> Keyword.put_new(:git_depth, if(include_git, do: 20, else: 0))
       |> Keyword.put_new(:sample_size, if(include_samples, do: 5, else: 0))
 
     ctx = build_context(context_opts)
@@ -115,7 +105,6 @@ defmodule Manfrod.Agent.Init do
       format_soul(ctx.soul),
       format_linked_notes(ctx.linked_notes),
       format_recent_events(ctx.recent_events),
-      format_git_log(ctx.git_log),
       format_graph_sample(ctx.graph_sample)
     ]
 
@@ -129,13 +118,6 @@ defmodule Manfrod.Agent.Init do
   defp default_since do
     DateTime.utc_now()
     |> DateTime.add(-24, :hour)
-  end
-
-  defp get_git_log(depth) do
-    case Shell.run("git log --oneline -#{depth}", timeout: 5_000) do
-      {:ok, output, 0} -> String.trim(output)
-      _ -> nil
-    end
   end
 
   defp format_soul(nil), do: nil
@@ -191,15 +173,6 @@ defmodule Manfrod.Agent.Init do
 
     [Last 10 Events]
     #{recent}
-    """
-  end
-
-  defp format_git_log(nil), do: nil
-
-  defp format_git_log(log) do
-    """
-    [Recent Git Commits]
-    #{log}
     """
   end
 

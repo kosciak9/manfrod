@@ -3,9 +3,6 @@ defmodule Manfrod.Agent do
   The Agent - a GenServer with an inbox.
   Receives messages asynchronously, thinks, acts, responds via event bus.
 
-  Manfrod can modify his own code, execute shell commands, and evaluate
-  arbitrary Elixir expressions. He is self-improving and self-healing.
-
   ## Event-driven architecture
 
   The Agent broadcasts Activity events instead of calling handlers directly:
@@ -35,14 +32,12 @@ defmodule Manfrod.Agent do
   alias Manfrod.Memory
   alias Manfrod.Repo
   alias Manfrod.Memory.Soul
-  alias Manfrod.Shell
   alias Manfrod.Telegram.TypingRefresher
   alias Manfrod.Voyage
   alias Manfrod.Workers.TriggerWorker
 
   @system_prompt """
   ## Your Capabilities
-  - run_shell: Execute bash commands on the host system (git, file operations, etc.)
   - set_reminder: Schedule a one-time reminder for yourself at a specific time
   - list_reminders: See all pending one-time reminders you have scheduled
   - cancel_reminder: Cancel a pending one-time reminder by its job ID
@@ -69,16 +64,6 @@ defmodule Manfrod.Agent do
   # Tool definitions are created at runtime to avoid compile-time validation issues
   defp tools do
     [
-      ReqLLM.Tool.new!(
-        name: "run_shell",
-        description:
-          "Execute a bash command on the host system. Use for git, file operations, system checks, etc.",
-        parameter_schema: [
-          command: [type: :string, required: true, doc: "Bash command to execute"],
-          timeout: [type: :integer, doc: "Timeout in milliseconds (default: 30000)"]
-        ],
-        callback: &tool_run_shell/1
-      ),
       ReqLLM.Tool.new!(
         name: "set_reminder",
         description:
@@ -314,16 +299,6 @@ defmodule Manfrod.Agent do
     # Oban.cancel_job/1 always returns :ok (idempotent)
     :ok = Oban.cancel_job(job_id)
     {:ok, "Reminder ##{job_id} cancelled."}
-  end
-
-  def tool_run_shell(%{command: command} = args) do
-    timeout = Map.get(args, :timeout, 30_000)
-
-    case Shell.run(command, timeout: timeout) do
-      {:ok, output, 0} -> {:ok, "Exit 0:\n#{output}"}
-      {:ok, output, code} -> {:ok, "Exit #{code}:\n#{output}"}
-      {:error, reason} -> {:ok, "Shell error: #{reason}"}
-    end
   end
 
   def tool_create_recurring_reminder(args) do
@@ -867,7 +842,7 @@ defmodule Manfrod.Agent do
   defp get_note_context(query) do
     soul = Memory.get_soul()
 
-    # Get notes linked to soul (workspace notes like Builder Log, etc.)
+    # Get notes linked to soul (workspace notes)
     linked_to_soul =
       if soul do
         Memory.get_node_links(soul.id)
